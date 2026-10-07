@@ -1,0 +1,73 @@
+MASTER SERVICE AGREEMENT
+
+This Master Service Agreement ("Agreement") is entered into as of January 15, 2025 (the "Effective Date"), by and between:
+
+NORTHBRIDGE DIGITAL SOLUTIONS INC., a company organized under the laws of Delaware, with its principal office at 500 Harbor Way, Suite 300, Boston, MA ("Service Provider"),
+
+and
+
+CLEARVIEW RETAIL GROUP LLC, with its principal office at 88 Market Street, Austin, TX ("Client").
+
+Service Provider and Client may each be referred to individually as a "Party" and collectively as the "Parties."
+
+1. TERM
+
+This Agreement shall commence on the Effective Date and shall continue for an initial period of twelve (12) months (the "Initial Term"). Thereafter, this Agreement shall automatically renew for successive twelve (12) month periods (each a "Renewal Term") unless either Party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term.
+
+2. SERVICES
+
+Service Provider shall provide software development, hosting, and technical support services as described in Exhibit A (the "Services"). Service Provider must deliver a monthly status report to Client by the fifth (5th) business day of each month. Service Provider must maintain a system uptime of no less than 99.5% measured monthly.
+
+3. PAYMENT TERMS
+
+Client shall pay Service Provider a monthly fee of $18,500, due within thirty (30) days of receipt of invoice. Invoices will be issued on the first business day of each month. Late payments shall accrue interest at 1.5% per month on the outstanding balance. Client must provide Service Provider with sixty (60) days' written notice before disputing any invoice, or the invoice shall be deemed accepted.
+
+4. TERMINATION
+
+4.1 Termination for Convenience. Either Party may terminate this Agreement for any reason upon ninety (90) days' prior written notice to the other Party.
+
+4.2 Termination for Cause. Either Party may terminate this Agreement immediately upon written notice if the other Party materially breaches this Agreement and fails to cure such breach within fifteen (15) days of receiving written notice describing the breach.
+
+4.3 Effect of Termination. Upon termination, Client shall pay Service Provider for all Services rendered up to the effective date of termination. Sections 5 (Confidentiality), 6 (Liability), 7 (Intellectual Property), and 9 (Dispute Resolution) shall survive termination of this Agreement.
+
+5. CONFIDENTIALITY
+
+Each Party agrees to hold in strict confidence all non-public business, technical, and financial information disclosed by the other Party ("Confidential Information") and shall not disclose such information to any third party without prior written consent, except as required by law. This obligation shall survive for five (5) years following termination of this Agreement. Each Party must return or destroy all Confidential Information of the other Party within thirty (30) days of termination upon written request.
+
+6. LIABILITY AND INDEMNIFICATION
+
+6.1 Limitation of Liability. EXCEPT FOR BREACHES OF SECTION 5 (CONFIDENTIALITY), NEITHER PARTY'S LIABILITY ARISING OUT OF THIS AGREEMENT SHALL EXCEED THE FEES PAID BY CLIENT IN THE THREE (3) MONTHS PRECEDING THE CLAIM. IN NO EVENT SHALL EITHER PARTY BE LIABLE FOR ANY INDIRECT, CONSEQUENTIAL, OR PUNITIVE DAMAGES.
+
+6.2 Indemnification. Client shall indemnify, defend, and hold harmless Service Provider from any third-party claims arising out of Client's misuse of the Services or violation of applicable law. Service Provider shall indemnify, defend, and hold harmless Client from any third-party claims that the Services, as delivered, infringe a third party's intellectual property rights.
+
+7. INTELLECTUAL PROPERTY
+
+All pre-existing intellectual property of each Party shall remain the property of that Party. Any custom software, code, or deliverables created specifically for Client under this Agreement and paid for in full ("Work Product") shall be owned by Client upon full payment. Service Provider retains ownership of its underlying tools, frameworks, and general-purpose libraries used to deliver the Services, and grants Client a non-exclusive, perpetual license to use such underlying tools solely as incorporated into the Work Product.
+
+8. NON-COMPETE
+
+During the term of this Agreement and for a period of twelve (12) months thereafter, Service Provider shall not knowingly solicit for employment any employee of Client who was directly involved in the provision of Services under this Agreement.
+
+9. DISPUTE RESOLUTION
+
+Any dispute arising out of or relating to this Agreement shall first be addressed through good-faith negotiation between the Parties' senior representatives. If the dispute is not resolved within thirty (30) days, it shall be submitted to binding arbitration administered by the American Arbitration Association in Boston, Massachusetts, and judgment on the award may be entered in any court of competent jurisdiction. Each Party shall bear its own costs of arbitration except that the prevailing Party shall be entitled to recover reasonable attorneys' fees.
+
+10. GOVERNING LAW
+
+This Agreement shall be governed by and construed in accordance with the laws of the Commonwealth of Massachusetts, without regard to its conflict of laws principles.
+
+11. PENALTIES
+
+If Service Provider fails to meet the uptime commitment set forth in Section 2 for two (2) consecutive months, Client shall be entitled to a service credit equal to 10% of that month's fees for each month of non-compliance, up to a maximum credit of 30% of fees paid in a rolling twelve (12) month period.
+
+12. GENERAL PROVISIONS
+
+This Agreement constitutes the entire agreement between the Parties. Any amendment must be in writing and signed by both Parties. Neither Party may assign this Agreement without the prior written consent of the other Party, except in connection with a merger, acquisition, or sale of substantially all assets.
+
+IN WITNESS WHEREOF, the Parties have executed this Agreement as of the Effective Date.
+
+NORTHBRIDGE DIGITAL SOLUTIONS INC.
+By: Maria Chen, Chief Executive Officer
+
+CLEARVIEW RETAIL GROUP LLC
+By: David Okafor, Chief Operating Officer

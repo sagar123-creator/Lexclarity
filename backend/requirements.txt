@@ -1,0 +1,25 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+pydantic==2.12.5
+python-multipart==0.0.9
+
+# Document parsing
+pypdf==4.3.1
+python-docx==1.1.2
+
+# Embeddings (local, no API key required by default)
+sentence-transformers==3.0.1
+
+# Vector store (local default)
+chromadb==0.5.5
+
+# LLM provider (Anthropic default; openai optional)
+anthropic==0.34.2
+openai==1.47.0
+google-genai==2.20.0
+
+# Production vector store option
+psycopg2-binary==2.9.12
+
+python-dotenv==1.0.1

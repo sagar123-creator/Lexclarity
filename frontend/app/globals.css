@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+  ::selection {
+    background-color: #E9F0F8;
+  }
+  :focus-visible {
+    outline: 2px solid #1F3A5F;
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .section-label {
+    @apply font-mono text-[11px] uppercase tracking-[0.12em] text-ink-faint;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
