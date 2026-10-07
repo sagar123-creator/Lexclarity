@@ -48,10 +48,11 @@ class Settings:
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
 
     # --- LLM ---
-    # LLM_PROVIDER: "anthropic", "openai", or "gemini"
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "anthropic")
+    # LLM_PROVIDER: "ollama", "anthropic", "openai", or "gemini"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama").lower()
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen2.5:7b")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
 
     # --- Chunking ---
@@ -67,11 +68,12 @@ class Settings:
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
 
     # --- CORS ---
+    FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
     FRONTEND_ORIGINS: list[str] = [
         origin.strip()
         for origin in os.getenv(
             "FRONTEND_ORIGINS",
-            os.getenv("FRONTEND_ORIGIN", "http://localhost:3000,http://localhost:3001"),
+            FRONTEND_ORIGIN,
         ).split(",")
         if origin.strip()
     ]

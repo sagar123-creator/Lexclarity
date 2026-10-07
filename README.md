@@ -198,7 +198,7 @@ lexclarity/
 ## 5. Installation
 
 ### Prerequisites
-- Python 3.11 (required by the pinned ChromaDB/NumPy dependencies)
+- Python 3.10+
 - Node.js 18+
 - A Gemini, Anthropic, or OpenAI API key (for summarization, extraction, risk analysis, and chat)
 
@@ -211,16 +211,9 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env and set LLM_PROVIDER=gemini and LLM_API_KEY=your-gemini-key
+# Copy .env.example to .env and configure Ollama as described below
 
 uvicorn app.main:app --reload --port 8000
-```
-
-On Windows, run the backend with the virtual environment's interpreter if
-activation is unavailable:
-
-```powershell
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
 The backend will:
@@ -229,6 +222,32 @@ The backend will:
 - Download the local embedding model on first use (~80MB, one-time)
 
 No database server or vector database setup is required for local development.
+
+### Running LexClarity with Ollama
+
+Ollama is the default local LLM provider and does not require a cloud API key.
+On Windows:
+
+1. Install Ollama.
+2. Verify it with `ollama --version`.
+3. Download the model: `ollama pull qwen2.5:7b`.
+4. Verify it with `ollama list`.
+5. Test it with `ollama run qwen2.5:7b`.
+6. Set these values in `backend/.env`:
+
+   ```dotenv
+   LLM_PROVIDER=ollama
+   LLM_API_KEY=
+   LLM_MODEL=qwen2.5:7b
+   LLM_BASE_URL=http://localhost:11434/v1
+   ```
+
+7. Start the backend:
+   `.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000`
+8. Start the frontend with `npm run dev`.
+
+Anthropic, OpenAI, and Gemini remain available by setting `LLM_PROVIDER`,
+`LLM_MODEL`, and the corresponding cloud `LLM_API_KEY`.
 
 ### Frontend setup
 
@@ -259,9 +278,10 @@ Visit **http://localhost:3000**.
 | `EMBEDDING_PROVIDER` | `local` | `local` (sentence-transformers) or `openai` |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local embedding model name |
 | `EMBEDDING_API_KEY` | (empty) | Required only if `EMBEDDING_PROVIDER=openai` |
-| `LLM_PROVIDER` | `anthropic` | `gemini`, `anthropic`, or `openai` |
-| `LLM_API_KEY` | (empty) | **Required.** Your LLM provider API key |
-| `LLM_MODEL` | `claude-sonnet-4-6` | Any model string your provider supports, such as `gemini-2.5-flash` |
+| `LLM_PROVIDER` | `ollama` | `ollama`, `gemini`, `anthropic`, or `openai` |
+| `LLM_API_KEY` | (empty) | Required for cloud providers; not required for Ollama |
+| `LLM_MODEL` | `qwen2.5:7b` | Any model string your provider supports |
+| `LLM_BASE_URL` | `http://localhost:11434/v1` | Ollama OpenAI-compatible API base URL |
 | `CHUNK_SIZE_TOKENS` | `350` | Approx. words per chunk |
 | `CHUNK_OVERLAP_TOKENS` | `60` | Overlap carried between chunks |
 | `RETRIEVAL_TOP_K` | `6` | Chunks retrieved per question |

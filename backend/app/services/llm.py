@@ -3,7 +3,7 @@ LLM provider wrapper.
 
 Every other service (summarizer, risk_analyzer, chatbot) calls `complete()`
 and never talks to a provider SDK directly. This keeps the model swappable
-through LLM_PROVIDER / LLM_MODEL / LLM_API_KEY alone.
+through LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL.
 """
 import json
 import re
@@ -17,7 +17,9 @@ class LLMError(Exception):
 
 def complete(system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
     """Send one turn to the configured LLM and return the text response."""
-    if not settings.LLM_API_KEY:
+    if settings.LLM_PROVIDER not in {"ollama", "anthropic", "openai", "gemini"}:
+        raise LLMError(f"Unknown LLM_PROVIDER: {settings.LLM_PROVIDER}")
+    if settings.LLM_PROVIDER != "ollama" and not settings.LLM_API_KEY:
         raise LLMError(
             "LLM_API_KEY is not set. Add it to your .env file — see .env.example. "
             "LexClarity needs an LLM to summarize documents and power the chatbot."
@@ -25,13 +27,55 @@ def complete(system_prompt: str, user_prompt: str, max_tokens: int | None = None
 
     max_tokens = max_tokens or settings.LLM_MAX_TOKENS
 
+    if settings.LLM_PROVIDER == "ollama":
+        return _complete_ollama(system_prompt, user_prompt, max_tokens)
     if settings.LLM_PROVIDER == "anthropic":
         return _complete_anthropic(system_prompt, user_prompt, max_tokens)
     if settings.LLM_PROVIDER == "openai":
         return _complete_openai(system_prompt, user_prompt, max_tokens)
     if settings.LLM_PROVIDER == "gemini":
         return _complete_gemini(system_prompt, user_prompt, max_tokens)
-    raise LLMError(f"Unknown LLM_PROVIDER: {settings.LLM_PROVIDER}")
+
+
+def _complete_ollama(system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise LLMError("The 'openai' package is not installed.") from e
+
+    try:
+        client = OpenAI(base_url=settings.LLM_BASE_URL, api_key="ollama")
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            max_tokens=max_tokens,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.choices[0].message.content or ""
+    except Exception as e:
+        message = str(e).lower()
+        if (
+            "404" in message
+            or "not found" in message
+            or ("model" in message and "exist" in message)
+        ):
+            raise LLMError(
+                "Qwen2.5 7B is not available in Ollama. Run: ollama pull qwen2.5:7b"
+            ) from e
+        if (
+            "connect" in message
+            or "connection" in message
+            or "localhost" in message
+            or "timed out" in message
+            or "timeout" in message
+        ):
+            raise LLMError(
+                "Local Ollama server is unavailable. Please make sure Ollama is running "
+                "and the qwen2.5:7b model is installed."
+            ) from e
+        raise LLMError(f"Ollama request failed: {e}") from e
 
 
 def _complete_anthropic(system_prompt: str, user_prompt: str, max_tokens: int) -> str:
