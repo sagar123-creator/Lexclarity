@@ -8,13 +8,22 @@ python-multipart==0.0.9
 pypdf==4.3.1
 python-docx==1.1.2
 
-# Embeddings (local, no API key required by default)
+# OCR fallback for scanned PDFs (optional but recommended).
+# pytesseract also requires the Tesseract binary installed on the system:
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#   Debian/Ubuntu: apt install tesseract-ocr
+pymupdf==1.24.10
+pytesseract==0.3.13
+
+# Embeddings (local, no API key required by default).
+# Also pulls in transformers + torch, which the optional NLI verifier
+# (VERIFIER_PROVIDER=nli / auto, model cross-encoder/nli-MiniLM2-L6-H768) uses.
 sentence-transformers==3.0.1
 
 # Vector store (local default)
 chromadb==0.5.5
 
-# LLM provider (Anthropic default; openai optional)
+# LLM provider (Gemini default; Anthropic/OpenAI optional, google-genai required for Gemini)
 anthropic==0.34.2
 openai>=1.55.0,<2.0.0
 google-genai==2.20.0

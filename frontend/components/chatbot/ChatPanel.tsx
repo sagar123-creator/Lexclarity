@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Trash2, FileSearch, HelpCircle, Loader2 } from "lucide-react";
+import { Send, Trash2, HelpCircle, Loader2 } from "lucide-react";
 import clsx from "clsx";
 import { Card, Button } from "@/components/ui/primitives";
+import { CitationChip } from "@/components/evidence/CitationChip";
+import { EvidencePanel, EvidenceTarget } from "@/components/evidence/EvidencePanel";
 import { api, ApiError } from "@/lib/api";
 import type { ChatMessage, Citation } from "@/types";
 
@@ -22,7 +24,18 @@ export function ChatPanel({ documentId }: { documentId: string }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [evidenceTarget, setEvidenceTarget] = useState<EvidenceTarget | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  function openEvidence(citation: Citation) {
+    setEvidenceTarget({
+      documentId: citation.document_id || documentId,
+      pageNumber: citation.page_number,
+      quote: citation.quote || citation.snippet,
+      chunkId: citation.chunk_id,
+      label: "Cited passage",
+    });
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -107,7 +120,7 @@ export function ChatPanel({ documentId }: { documentId: string }) {
         )}
 
         {messages.map((m) => (
-          <ChatBubble key={m.id} message={m} />
+          <ChatBubble key={m.id} message={m} onOpenEvidence={openEvidence} />
         ))}
 
         {loading && (
@@ -139,11 +152,22 @@ export function ChatPanel({ documentId }: { documentId: string }) {
           <Send size={14} />
         </Button>
       </form>
+
+      <EvidencePanel
+        target={evidenceTarget}
+        onClose={() => setEvidenceTarget(null)}
+      />
     </Card>
   );
 }
 
-function ChatBubble({ message }: { message: ChatMessage }) {
+function ChatBubble({
+  message,
+  onOpenEvidence,
+}: {
+  message: ChatMessage;
+  onOpenEvidence: (c: Citation) => void;
+}) {
   const isUser = message.role === "user";
   return (
     <div className={clsx("flex", isUser ? "justify-end" : "justify-start")}>
@@ -156,10 +180,16 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         >
           {message.content}
         </div>
+        {message.confidence === "low_confidence" && (
+          <p className="mt-1.5 text-xs text-brass italic">
+            Low confidence — one or more claims could not be fully verified
+            against the document.
+          </p>
+        )}
         {!isUser && message.citations && message.citations.length > 0 && (
           <div className="mt-2 space-y-1.5">
             {message.citations.map((c, i) => (
-              <CitationChip key={i} citation={c} />
+              <CitationChip key={i} citation={c} onOpen={onOpenEvidence} />
             ))}
           </div>
         )}
@@ -167,24 +197,6 @@ function ChatBubble({ message }: { message: ChatMessage }) {
           <p className="mt-1.5 text-xs text-ink-faint italic">
             Not found in the uploaded document.
           </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CitationChip({ citation }: { citation: Citation }) {
-  if (!citation.page_number && !citation.section_reference) return null;
-  return (
-    <div className="flex items-start gap-1.5 rounded-md border border-line bg-white px-2.5 py-1.5">
-      <FileSearch size={12} className="text-brass mt-0.5 shrink-0" />
-      <div>
-        <p className="font-mono text-[11px] text-brass">
-          Source: {citation.page_number ? `Page ${citation.page_number}` : ""}
-          {citation.section_reference ? ` — ${citation.section_reference}` : ""}
-        </p>
-        {citation.snippet && (
-          <p className="text-xs text-ink-faint mt-0.5 line-clamp-2">{citation.snippet}</p>
         )}
       </div>
     </div>

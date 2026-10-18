@@ -35,7 +35,8 @@ class VectorStore(Protocol):
     def upsert_chunks(self, document_id: str, chunk_ids: list[str], texts: list[str],
                        embeddings: list[list[float]], metadatas: list[dict]) -> None: ...
 
-    def query(self, document_id: str, query_embedding: list[float], top_k: int) -> list[RetrievedChunk]: ...
+    def query(self, document_id: str, query_embedding: list[float], top_k: int,
+              document_ids: list[str] | None = None) -> list[RetrievedChunk]: ...
 
     def delete_document(self, document_id: str) -> None: ...
 
@@ -59,12 +60,36 @@ class ChromaVectorStore:
             metadatas=metadatas,
         )
 
-    def query(self, document_id, query_embedding, top_k):
-        result = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where={"document_id": document_id},
-        )
+    def query(self, document_id, query_embedding, top_k, document_ids=None):
+        if document_ids is not None:
+            # Cross-document query: merge per-document results (robust across
+            # Chroma versions and always respects the document allow-list).
+            out: list[RetrievedChunk] = []
+            for doc_id in document_ids:
+                out.extend(self.query(doc_id, query_embedding, top_k, document_ids=None))
+            out.sort(key=lambda r: r.similarity, reverse=True)
+            return out[:top_k]
+
+        try:
+            result = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where={"document_id": document_id},
+            )
+        except Exception:  # noqa: BLE001 - e.g. "requested results > index size"
+            # Retry with progressively smaller k so tiny documents still work.
+            for k in range(max(1, top_k - 1), 0, -1):
+                try:
+                    result = self.collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=k,
+                        where={"document_id": document_id},
+                    )
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+            else:
+                return []
         out: list[RetrievedChunk] = []
         if not result["ids"] or not result["ids"][0]:
             return out
@@ -128,7 +153,13 @@ class PgVectorStore:
                     (cid, document_id, text, meta.get("page_number"), meta.get("section_heading"), emb),
                 )
 
-    def query(self, document_id, query_embedding, top_k):
+    def query(self, document_id, query_embedding, top_k, document_ids=None):
+        if document_ids is not None:
+            out: list[RetrievedChunk] = []
+            for doc_id in document_ids:
+                out.extend(self.query(doc_id, query_embedding, top_k, document_ids=None))
+            out.sort(key=lambda r: r.similarity, reverse=True)
+            return out[:top_k]
         with self.conn.cursor() as cur:
             cur.execute(
                 """

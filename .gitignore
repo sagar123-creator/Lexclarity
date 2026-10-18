@@ -17,6 +17,7 @@ frontend/.next/
 frontend/out/
 frontend/.env.local
 frontend/*.log
+frontend/tsconfig.tsbuildinfo
 
 # OS/editor files
 .DS_Store

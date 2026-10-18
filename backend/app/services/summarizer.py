@@ -8,7 +8,7 @@ still grounding the summary in the actual text.
 """
 from app.services.embeddings import embed_query
 from app.services.vector_store import get_vector_store
-from app.services.llm import complete_json, LLMError
+from app.services.llm import complete_json
 
 DOCUMENT_TYPES = [
     "Employment Agreement", "Rental Agreement", "NDA", "Service Agreement",
@@ -23,7 +23,7 @@ SYSTEM_PROMPT = (
 )
 
 
-def _representative_chunks(document_id: str, all_chunks: list[dict], max_chunks: int = 14) -> list[dict]:
+def _representative_chunks(document_id: str, all_chunks: list[dict], max_chunks: int = 8) -> list[dict]:
     if len(all_chunks) <= max_chunks:
         return all_chunks
 
@@ -63,14 +63,11 @@ Based ONLY on these excerpts, produce a JSON object:
 
 Be cautious and descriptive rather than definitive. Do not invent details not present in the excerpts."""
 
-    try:
-        result = complete_json(SYSTEM_PROMPT, prompt, max_tokens=2000)
-        if isinstance(result, dict):
-            return result
-    except LLMError as e:
-        return {
-            "document_type": "Other",
-            "executive_summary": f"Summary unavailable: {e}",
+    result = complete_json(SYSTEM_PROMPT, prompt, max_tokens=2000)
+    if isinstance(result, dict):
+        return result
+    # The model ran but did not return a valid summary object — a content
+    # (not provider) error the pipeline records without faking a summary.
+    return {"document_type": "Other", "executive_summary": None,
             "plain_english_overview": None,
-        }
-    return {"document_type": "Other", "executive_summary": None, "plain_english_overview": None}
+            "error": "The model did not return a valid summary object."}

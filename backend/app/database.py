@@ -21,10 +21,16 @@ def get_db():
 
 
 def init_db():
-    """Create all tables. Called on app startup (SQLite/dev convenience).
+    """Create all tables, then apply additive column migrations for
+    pre-existing databases. Called on app startup (SQLite/dev convenience).
 
     For Postgres in production, prefer Alembic migrations instead of
     create_all — see README > Database Setup.
     """
     from app import models  # noqa: F401 ensure models are registered
     Base.metadata.create_all(bind=engine)
+
+    from app.migrations import run_migrations
+    applied = run_migrations(engine)
+    if applied:
+        print(f"[lexclarity] applied {len(applied)} schema migration(s): {', '.join(applied)}")

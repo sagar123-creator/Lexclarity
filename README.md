@@ -13,20 +13,60 @@ about the document through a Retrieval-Augmented-Generation (RAG) chatbot that a
 
 ## 1. Features
 
+LexClarity grew from a document summarizer into an evidence-grounded legal document
+intelligence platform. The UI is split into two sections per document — **ANALYZE**
+(understand what the document says) and **ACT** (decide and do something about it).
+
+### ANALYZE
 - **Document upload** — drag-and-drop or browse, for PDF / DOCX / TXT (up to 20MB by default)
 - **Real processing pipeline** — extract → clean → chunk → embed → store → analyze
 - **Executive summary & document classification** (Employment Agreement, NDA, Lease, etc.)
-- **Parties & obligations** — who's involved, and what each party must do
-- **Key dates & deadlines** — start/end dates, renewal windows, notice periods, payment terms
+- **Parties & obligations** — who's involved, and what each party must do, with
+  per-obligation task tracking (pending / in progress / completed)
+- **Key dates & deadlines** — start/end dates, renewal windows, notice periods, payment
+  terms; each date is labelled `explicit` vs `inferred` and `normalized` / `raw_only` / `uncertain`
 - **Key clause extraction** — Termination, Payment, Confidentiality, Liability,
-  Indemnification, IP, Non-compete, Dispute Resolution, Governing Law, Renewal, Penalties
+  Indemnification, IP, Non-compete, Dispute Resolution, Governing Law, Renewal, Penalties,
+  each enriched with plain-English explanation, rights/obligations, and concerns
 - **Risk analysis** — High / Medium / Low risk items, each with a plain-English
-  explanation and a source citation, using deliberately hedged, non-definitive language
-- **"Explain Simply"** — every clause and risk includes a plain-English translation
+  explanation, a source citation, a **deterministic severity rationale**, and a suggested
+  next step. Severity is never the LLM's say-so alone — see `risk_rules.py`.
+- **Evidence viewer** — the exact stored page text behind every finding; citation chips
+  are clickable and open a panel that highlights the cited passage (and warns when a quote
+  can't be located). OCR-sourced pages are flagged.
 - **Ask LexClarity** — a RAG chatbot with conversation memory, suggested questions,
-  and page/section citations for every answer. It explicitly says *"I couldn't find this
-  information in the uploaded document"* when the document doesn't contain an answer,
-  rather than guessing.
+  page/section citations for every answer, and per-citation verification (a citation whose
+  source wasn't actually retrieved is shown with an explicit warning). It says
+  *"I couldn't find this information in the uploaded document"* rather than guessing.
+- **Verify a claim** — type any statement and get a deterministic trust verdict:
+  `supported`, `contradicted`, `insufficient`, or `needs_review`, with the method
+  (`deterministic` / `nli` / `llm`) and the evidence excerpt.
+
+### ACT
+- **Action Center** — concrete next steps derived from the document's findings, with
+  explainable priority scoring, status (pending / in progress / completed) and decision
+  (accepted / rejected / deferred) tracking. Nothing is ever sent or filed automatically.
+- **Legal action plan** — an ordered, priority-grouped view of every action item.
+- **Negotiation assistant** — pick a clause and get friendlier / more balanced proposed
+  wording with rationale and talking points; original text is always preserved.
+- **Document generator** — AI drafts for common legal letters/notices. Missing facts are
+  left as `[PLACEHOLDER: …]` rather than invented; drafts are editable and exportable as
+  Markdown.
+- **Deadline tracker** — reminders from document dates plus manual ones; `inferred` dates
+  are labelled. Reminders are internal only — no emails are sent.
+- **Missing-clause checklist** — checks for clauses normally found in this document type.
+  "Missing" means the text wasn't found, not a legal opinion that it's required.
+- **Contract comparison** — clause-by-clause diff of two analyzed documents plus a risk
+  profile delta; material term changes (amounts, notice periods) are called out even when
+  wording barely changed. The summary describes textual differences only.
+
+### Platform
+- **Multi-document workspaces** — group related contracts and ask questions across all of
+  them at once, with per-document citations and explicit conflict flags when documents
+  disagree, plus a cross-document timeline and obligations roll-up.
+- **Accuracy evaluation dashboard** — runs the real pipeline against a labelled dataset and
+  scores risk/clause extraction. Shows **"Not evaluated"** when no real run exists — it
+  never fabricates metrics.
 - **Ownership isolation** — every document and chat request is scoped to its owner
 - **Legal disclaimer** shown throughout the app
 
@@ -132,8 +172,9 @@ semantically-retrieved slice of the document, not the whole thing.
 | Database          | PostgreSQL (production) or SQLite (zero-config default)      |
 | Vector store      | ChromaDB (default, local) or PostgreSQL + pgvector           |
 | Embeddings        | sentence-transformers `all-MiniLM-L6-v2` (local, default), swappable to OpenAI embeddings |
-| LLM               | Anthropic Claude (default) or OpenAI, swappable via env vars |
-| Document parsing  | pypdf, python-docx                                            |
+| LLM               | Gemini (default), Groq, Anthropic, OpenAI, or local Ollama — swappable via env vars |
+| Verification      | Deterministic matching + optional local NLI (`cross-encoder/nli-MiniLM2-L6-H768`) + LLM judge |
+| Document parsing  | pypdf, python-docx; optional OCR via PyMuPDF + Tesseract |
 
 Every provider (LLM, embeddings, vector store, database) is swapped purely through
 environment variables — no code changes required. See `.env.example`.
@@ -151,25 +192,48 @@ lexclarity/
 │   │   ├── database.py              # SQLAlchemy engine/session
 │   │   ├── models.py                # ORM models (full schema)
 │   │   ├── schemas.py               # Pydantic request/response models
+│   │   ├── migrations.py            # Additive, idempotent schema upgrades
 │   │   ├── api/
 │   │   │   ├── auth.py              # Simplified demo auth + user resolution
 │   │   │   ├── upload.py            # POST /upload, GET /documents, ownership checks
 │   │   │   ├── analysis.py          # summary / risks / clauses endpoints
-│   │   │   └── chat.py              # RAG chat endpoint + conversation history
+│   │   │   ├── chat.py              # RAG chat endpoint + conversation history
+│   │   │   ├── evidence.py          # Page text + chunk retrieval
+│   │   │   ├── verification.py      # Claim verification (trust engine)
+│   │   │   ├── actions.py           # Action Center CRUD + generation
+│   │   │   ├── plan.py              # Legal action plan
+│   │   │   ├── negotiation.py       # Clause suggestions
+│   │   │   ├── generator.py         # Draft generation / editing / export
+│   │   │   ├── deadlines.py         # Reminders + obligation task status
+│   │   │   ├── checklist.py         # Missing-clause checklist
+│   │   │   ├── compare.py           # Contract comparison
+│   │   │   ├── workspaces.py        # Multi-document workspaces
+│   │   │   └── evaluation.py        # Accuracy evaluation runs
 │   │   ├── services/
-│   │   │   ├── document_parser.py   # PDF/DOCX/TXT extraction, page-aware
+│   │   │   ├── document_parser.py   # PDF/DOCX/TXT extraction, page-aware, OCR fallback
 │   │   │   ├── chunking.py          # Sentence-aware chunking with overlap
 │   │   │   ├── embeddings.py        # Pluggable embedding provider
 │   │   │   ├── vector_store.py      # Chroma / pgvector backends
-│   │   │   ├── llm.py               # Pluggable LLM provider (Anthropic/OpenAI)
+│   │   │   ├── llm.py               # Pluggable LLM provider + transient retry/backoff
 │   │   │   ├── summarizer.py        # Executive summary + doc classification
 │   │   │   ├── extractor.py         # Entities, obligations, dates, clauses
 │   │   │   ├── risk_analyzer.py     # Risk detection with hedged language
+│   │   │   ├── risk_rules.py        # Deterministic severity rubric
+│   │   │   ├── verification.py      # Trust engine (deterministic/NLI/LLM judge)
+│   │   │   ├── action_center.py     # Priority scoring + action generation
+│   │   │   ├── negotiation.py       # Clause rewrite suggestions
+│   │   │   ├── generator.py         # Draft templates + placeholder invariant
+│   │   │   ├── comparator.py        # Clause diff + risk delta
+│   │   │   ├── missing_clauses.py   # Missing-clause checklist engine
+│   │   │   ├── workspace_service.py # Cross-document search/timeline/obligations
+│   │   │   ├── evaluation.py        # Evaluation dataset runner + metrics
 │   │   │   ├── chatbot.py           # RAG question-answering + citations
-│   │   │   └── pipeline.py          # Orchestrates the full pipeline
+│   │   │   └── pipeline.py          # Orchestrates the full pipeline (+ outage handling)
 │   │   └── utils/
 │   │       ├── text_cleaning.py     # Cleaning, sentence splitting, heading detection
 │   │       └── file_validation.py   # Extension/size validation, filename sanitization
+│   ├── tests/                       # unittest suite (108 tests)
+│   ├── evaluation/datasets/         # Labelled QA/risk/clause eval datasets (JSONL)
 │   ├── sample_documents/
 │   │   └── sample_service_agreement.txt
 │   ├── requirements.txt
@@ -180,15 +244,21 @@ lexclarity/
     │   ├── page.tsx                 # Landing page
     │   ├── upload/page.tsx          # Upload + live processing status
     │   ├── dashboard/page.tsx       # Document list
-    │   └── documents/[id]/page.tsx  # Analysis page (tabs: Overview/Risks/Clauses/Chat)
+    │   ├── documents/[id]/page.tsx  # ANALYZE + ACT tabs
+    │   ├── workspaces/page.tsx      # Workspace list
+    │   ├── workspaces/[id]/page.tsx # Cross-document search/timeline/obligations
+    │   └── evaluation/page.tsx      # Accuracy dashboard ("Not evaluated" when empty)
     ├── components/
     │   ├── upload/                  # Dropzone, processing stepper
-    │   ├── dashboard/                # Document cards
-    │   ├── analysis/                 # Overview/Risks/Clauses tabs
-    │   ├── chatbot/                  # ChatPanel (Ask LexClarity)
-    │   ├── layout/                   # Header, disclaimer
-    │   └── ui/                       # Badge, Card, Button, Tabs primitives
-    ├── lib/api.ts                   # Typed API client
+    │   ├── dashboard/               # Document cards
+    │   ├── analysis/                # Summary/Obligations/Dates/Evidence/Risks/Clauses tabs
+    │   ├── action/                  # Action Center/Plan/Negotiation/Generator/Deadlines/
+    │   │                            #   Compliance/Comparison tabs
+    │   ├── evidence/                # CitationChip, EvidencePanel, VerificationBadge
+    │   ├── chatbot/                 # ChatPanel (Ask LexClarity)
+    │   ├── layout/                  # Header, disclaimer, ANALYZE/ACT SectionNav
+    │   └── ui/                      # Badge, Card, Button, Tabs primitives
+    ├── lib/api.ts                   # Typed API client (all endpoints)
     ├── types/index.ts               # Shared TypeScript types
     └── .env.local.example
 ```
@@ -200,7 +270,7 @@ lexclarity/
 ### Prerequisites
 - Python 3.10+
 - Node.js 18+
-- A Gemini, Anthropic, or OpenAI API key (for summarization, extraction, risk analysis, and chat)
+- A Gemini API key (for summarization, extraction, risk analysis, and chat)
 
 ### Backend setup
 
@@ -211,7 +281,7 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Copy .env.example to .env and configure Ollama as described below
+# Add your Gemini API key to backend/.env as described below
 
 uvicorn app.main:app --reload --port 8000
 ```
@@ -223,30 +293,25 @@ The backend will:
 
 No database server or vector database setup is required for local development.
 
-### Running LexClarity with Ollama
+### Running LexClarity with Gemini
 
-Ollama is the default local LLM provider and does not require a cloud API key.
-On Windows:
-
-1. Install Ollama.
-2. Verify it with `ollama --version`.
-3. Download the model: `ollama pull qwen2.5:7b`.
-4. Verify it with `ollama list`.
-5. Test it with `ollama run qwen2.5:7b`.
-6. Set these values in `backend/.env`:
+Gemini is the default LLM provider. Create a Google AI Studio account and API key at
+https://aistudio.google.com/apikey, then set these values in `backend/.env`:
 
    ```dotenv
-   LLM_PROVIDER=ollama
-   LLM_API_KEY=
-   LLM_MODEL=qwen2.5:7b
-   LLM_BASE_URL=http://localhost:11434/v1
+   LLM_PROVIDER=gemini
+   LLM_API_KEY=YOUR_GEMINI_API_KEY
+   LLM_MODEL=gemini-3.6-flash
+   LLM_BASE_URL=
+   LLM_MAX_TOKENS=2000
    ```
 
-7. Start the backend:
+Start the backend:
    `.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000`
-8. Start the frontend with `npm run dev`.
+Start the frontend with `npm run dev`, upload a legal document, and verify its summary,
+clauses, risks, faithfulness verification, and chatbot responses.
 
-Anthropic, OpenAI, and Gemini remain available by setting `LLM_PROVIDER`,
+Groq, Anthropic, OpenAI, and the existing Ollama adapter remain available by setting `LLM_PROVIDER`,
 `LLM_MODEL`, and the corresponding cloud `LLM_API_KEY`.
 
 ### Frontend setup
@@ -278,10 +343,21 @@ Visit **http://localhost:3000**.
 | `EMBEDDING_PROVIDER` | `local` | `local` (sentence-transformers) or `openai` |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Local embedding model name |
 | `EMBEDDING_API_KEY` | (empty) | Required only if `EMBEDDING_PROVIDER=openai` |
-| `LLM_PROVIDER` | `ollama` | `ollama`, `gemini`, `anthropic`, or `openai` |
-| `LLM_API_KEY` | (empty) | Required for cloud providers; not required for Ollama |
-| `LLM_MODEL` | `qwen2.5:7b` | Any model string your provider supports |
-| `LLM_BASE_URL` | `http://localhost:11434/v1` | Ollama OpenAI-compatible API base URL |
+| `LLM_PROVIDER` | `gemini` | `gemini`, `groq`, `anthropic`, `openai`, or `ollama` |
+| `LLM_API_KEY` | (empty) | Gemini API key, or the key required by the selected cloud provider |
+| `LLM_MODEL` | `gemini-3.6-flash` | Any model string your provider supports |
+| `LLM_BASE_URL` | (empty) | Optional provider base URL; used by OpenAI-compatible providers |
+| `LLM_MAX_TOKENS` | `2000` | Max tokens per LLM completion |
+| `LLM_MAX_RETRIES` | `3` | Retries for transient LLM failures (5xx / rate limit / timeout) |
+| `LLM_RETRY_BACKOFF_SECONDS` | `1.5` | Base backoff; doubles per retry (1.5s → 3s → 6s …) |
+| `LLM_RATE_LIMIT_BACKOFF_SECONDS` | `12.0` | Base backoff for rate-limit (429) retries; a provider `retry-after` hint is honoured when sent, plus bounded jitter |
+| `LLM_RATE_LIMIT_BACKOFF_MAX_SECONDS` | `45.0` | Hard cap on any single rate-limit backoff wait |
+| `LLM_RATE_LIMIT_RETRIES` | `5` | Attempts for *transient* (per-minute) rate limits before giving up |
+| `LLM_TOKEN_BUDGET_PER_MINUTE` | `0` | Client-side tokens-per-minute pacing (0 = off). Groq's free tier meters ~8000 TPM |
+
+> **Groq free-tier daily quota (TPD).** Beyond the ~8000 TPM window, Groq's free tier enforces a **tokens-per-day** quota (≈200k/day on `openai/gpt-oss-120b`). When it is hit, the API returns `429` with `code: rate_limit_exceeded`, `type: tokens`, and a `retry-after` of many minutes. LexClarity detects this *daily* dimension (vs. per-minute TPM or requests-per-minute RPM) and **fails fast** — it does not blind-retry for minutes, because a per-day quota cannot recover in a 45s backoff. Sections that already completed are **kept**, and the remaining stages are **skipped** and named in `error_message` so you can **Re-analyze** once the daily window resets. A different API key, a higher tier, or a lower `LLM_TOKEN_BUDGET_PER_MINUTE` are the only ways to get more headroom.
+| `VERIFIER_PROVIDER` | `auto` | Trust engine: `auto`, `nli`, `llm`, or `off`. `auto` lazily loads a local NLI model and falls back to an LLM judge (labelled as non-proof) |
+| `OCR_ENABLED` | `true` | Tesseract OCR fallback for scanned/image PDFs |
 | `CHUNK_SIZE_TOKENS` | `350` | Approx. words per chunk |
 | `CHUNK_OVERLAP_TOKENS` | `60` | Overlap carried between chunks |
 | `RETRIEVAL_TOP_K` | `6` | Chunks retrieved per question |
@@ -303,6 +379,23 @@ the frontend never sees `LLM_API_KEY` or `EMBEDDING_API_KEY`.
 
 ### Development (default): SQLite
 No setup needed — the file is created automatically on first run.
+
+### Schema migrations (additive)
+
+New tables are created automatically by `Base.metadata.create_all()`. For **existing**
+databases, `app/migrations.py` runs a set of additive, idempotent upgrades on startup
+(`ALTER TABLE … ADD COLUMN` guarded by an inspector check), so upgrading an older
+LexClarity database never drops or rewrites data. It is safe to restart repeatedly.
+
+> **Note:** migration is additive-only by design. If you need to change an existing
+> column's type or drop one, that is a destructive change and must be done manually —
+> this project deliberately never does it automatically.
+
+Key new tables/columns introduced by the intelligence platform: `document_pages`
+(full page text — the evidence viewer's source of truth), `action_items`, `drafts`,
+`clause_suggestions`, `reminders`, `checklist_items`, `comparisons`, `workspaces`,
+`workspace_documents`, `evaluation_runs`, plus verification/evidence columns on
+`risks`, `clauses`, `obligations`, and `important_dates`.
 
 ### Production: PostgreSQL
 
@@ -341,6 +434,37 @@ Interactive docs are auto-generated by FastAPI at **http://localhost:8000/docs**
 | `GET` | `/api/documents/{id}/clauses` | Extracted key clauses |
 | `POST` | `/api/documents/{id}/chat` | Ask a question (RAG) |
 | `GET` | `/api/documents/{id}/conversations/{cid}` | Full chat history |
+| `GET` | `/api/documents/{id}/pages` | All stored page text (evidence source of truth) |
+| `GET` | `/api/documents/{id}/pages/{n}` | One page's text |
+| `GET` | `/api/documents/{id}/chunks/{chunk_id}` | One retrieved chunk |
+| `POST` | `/api/documents/{id}/verify-claim` | Deterministic claim verification (trust engine) |
+| `GET` | `/api/documents/{id}/actions` | List action items |
+| `POST` | `/api/documents/{id}/actions/generate` | (Re)generate action items from findings |
+| `GET`/`PATCH` | `/api/actions/{action_id}` | Get / update an action (status, decision) |
+| `GET` | `/api/documents/{id}/plan` | Ordered legal action plan |
+| `GET` | `/api/templates` | Available draft templates |
+| `POST` | `/api/documents/{id}/drafts` | Generate an AI draft (with placeholders) |
+| `GET` | `/api/documents/{id}/drafts` | List drafts |
+| `GET`/`PUT` | `/api/drafts/{draft_id}` | Get / edit a draft |
+| `GET` | `/api/drafts/{draft_id}/export` | Export a draft as Markdown |
+| `POST` | `/api/documents/{id}/negotiate` | Suggest edits for a clause |
+| `GET` | `/api/documents/{id}/negotiate` | List saved suggestions |
+| `GET`/`POST` | `/api/documents/{id}/reminders` | List / create deadline reminders |
+| `PATCH`/`DELETE` | `/api/reminders/{reminder_id}` | Update / delete a reminder |
+| `PATCH` | `/api/obligations/{id}` | Update an obligation's task status |
+| `GET` | `/api/documents/{id}/checklist` | Missing-clause checklist results |
+| `POST` | `/api/documents/{id}/checklist/run` | (Re)run the missing-clause checklist |
+| `POST` | `/api/compare` | Compare two analyzed documents |
+| `GET` | `/api/compare` / `/api/compare/{id}` | List / get comparisons |
+| `GET`/`POST` | `/api/workspaces` | List / create workspaces |
+| `GET` | `/api/workspaces/{id}` | Workspace detail with documents |
+| `POST`/`DELETE` | `/api/workspaces/{id}/documents[/{doc_id}]` | Add / remove a document |
+| `POST` | `/api/workspaces/{id}/search` | Cross-document question answering |
+| `GET` | `/api/workspaces/{id}/timeline` | Cross-document timeline |
+| `GET` | `/api/workspaces/{id}/obligations` | Cross-document obligations |
+| `GET` | `/api/evaluation/status` | Latest evaluation status ("Not evaluated" if none) |
+| `GET` | `/api/evaluation/runs` | Evaluation run history |
+| `POST` | `/api/evaluation/run` | Run the evaluation (executes the real pipeline) |
 
 ### Chat request/response example
 
@@ -388,21 +512,66 @@ See **Section 2 (Architecture) → RAG chatbot flow** above for the full flow. I
 
 ---
 
-## 10. Troubleshooting
+## 10. Testing
+
+### Backend (Python)
+
+The backend has a `unittest` suite covering the pipeline, trust engine, risk rubric,
+comparator, generator placeholder invariant, migrations, workspaces, and more. Tests run
+offline — they use an isolated temp SQLite database, a `FakeVectorStore`, and scripted
+`fake_llm` responders, and they patch `VERIFIER_PROVIDER="off"` so no NLI model is ever
+downloaded during tests.
+
+```bash
+cd backend
+.\venv\Scripts\python.exe -m unittest discover -s tests -q    # Windows
+python3 -m unittest discover -s tests -q                       # macOS/Linux
+```
+
+**Result: 108 tests, all passing (OK).**
+
+> If you redirect output with `2>&1` in PowerShell, confirm the outcome with `$LASTEXITCODE`
+> rather than the shell's "Exited with code" line, which can be misleading.
+
+### Frontend (TypeScript)
+
+There is no browser/unit test runner wired up for the frontend yet. Instead, correctness is
+enforced by a strict typecheck and a production build, both of which pass clean:
+
+```bash
+cd frontend
+npx tsc --noEmit     # typecheck — passes with 0 errors
+npm run build        # production build — compiles and generates all 8 routes
+```
+
+### End-to-end smoke test
+
+An end-to-end script uploads `sample_documents/sample_service_agreement.txt` and exercises
+every major endpoint (summary, risks, clauses, pages, checklist, actions, plan, chat,
+verify-claim, negotiate, drafts, workspaces, compare, evaluation). It requires a **working**
+LLM API key — see the limitations note below.
+
+---
+
+## 11. Troubleshooting
 
 | Problem | Likely cause / fix |
 |---|---|
 | Upload succeeds but status stays `failed` with "LLM_API_KEY is not set" | Set `LLM_API_KEY` in `backend/.env` and restart the backend |
+| Document fails with "Gemini API quota or rate limit reached" | Your Gemini **free-tier** quota is exhausted (limit ~20 requests; resets after a few hours) or you hit a per-minute rate limit. Transient failures are retried automatically with backoff; persistent quota exhaustion needs a paid plan, a different key, or a different `LLM_PROVIDER`. |
+| Document `failed` with a message listing several stages | The LLM provider was unreachable. Transient errors (5xx / rate limit / timeout) are retried with exponential backoff (`LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_SECONDS`). If **all** stages fail, the document is marked failed with this actionable message; if only some fail, the document still reaches `ready` and the partial-failure note appears in `error_message`. |
+| Document fails with "Groq daily token quota is exhausted" | Your Groq key hit the **tokens-per-day** (TPD) free-tier quota (~200k/day). This is an account/day limit, not a code bug — LexClarity fails fast (no blind retries), keeps completed sections, and names the skipped ones. Wait for the daily window to reset and **Re-analyze**, or use a different key / higher tier. Check `console.groq.com` for your exact usage. |
 | "sentence-transformers is not installed" | Run `pip install -r requirements.txt` again — this installs the local embedding model |
-| Scanned PDF fails with "No extractable text was found" | The PDF is likely an image scan; run OCR on it first, or upload a text-based PDF |
-| CORS errors in the browser console | Ensure `FRONTEND_ORIGIN` in `backend/.env` matches your frontend URL exactly |
+| Scanned PDF fails with "No extractable text was found" | Install OCR deps (`pip install pymupdf pytesseract` + the Tesseract binary) with `OCR_ENABLED=true`, or upload a text-based PDF |
+| CORS errors in the browser console | Ensure `FRONTEND_ORIGINS` in `backend/.env` matches your frontend URL exactly |
 | Chat always says "I couldn't find this information" | Lower `RETRIEVAL_MIN_SIMILARITY` in `.env` (e.g. to `0.15`), or check the document actually finished processing (`status: ready`) |
 | First upload is slow | The local embedding model downloads once (~80MB) on first use — subsequent runs are fast |
+| Evaluation page shows "Not evaluated" | This is correct when no run exists. Click "Run evaluation now" (it executes the real pipeline and can take minutes). |
 | `psycopg2` install fails | Install PostgreSQL client headers (`apt install libpq-dev` on Debian/Ubuntu) or use the default SQLite setup instead |
 
 ---
 
-## 11. Try It Immediately
+## 12. Try It Immediately
 
 A sample agreement is included at `backend/sample_documents/sample_service_agreement.txt`
 — a Master Service Agreement with payment terms, termination, confidentiality, liability,
@@ -417,7 +586,7 @@ full pipeline run, then try asking:
 
 ---
 
-## 12. Security Notes
+## 13. Security Notes
 
 - File uploads are validated by extension and size; filenames are sanitized before
   being written to disk.
@@ -433,18 +602,44 @@ full pipeline run, then try asking:
 
 ---
 
-## 13. Future Improvements
+## 14. Limitations (honest notes)
+
+- **LLM availability.** Analysis, risk detection, clause enrichment, chat, negotiation, and
+  draft generation all depend on a reachable LLM. With a Gemini **free-tier** key, sustained
+  use hits a hard quota (~20 requests, reset after hours). Transient errors are retried with
+  backoff, but quota exhaustion is not something retry can fix — use a paid plan or a
+  different provider for production use. When the provider is down, documents fail with a
+  clear, actionable message rather than silently producing empty results.
+- **Severity is deterministic, not omniscient.** Risk severity comes from a documented
+  keyword/phrase rubric (`risk_rules.py`), not the model's opinion. It will miss novel risks
+  that don't match the rubric and is intentionally conservative — borderline items are
+  flagged `needs_review` rather than asserted.
+- **Verification has three tiers.** Deterministic text/value matching is authoritative;
+  the local NLI model is a strong heuristic; the LLM judge is explicitly labelled as *not
+  proof*. OCR-derived evidence degrades to `needs_review` because OCR can alter characters.
+- **No automatic actions.** LexClarity drafts reminders, replies, and redlines but never
+  sends, files, or emails anything. Every external action requires a human.
+- **Drafts contain placeholders.** Missing facts are left as `[PLACEHOLDER: …]`. A draft is
+  a starting point, not a finished legal document.
+- **Demo auth.** Documents are scoped by an `X-User-Id` header (demo user by default). Swap
+  `app/api/auth.py::get_current_user` for real session/JWT auth before production.
+- **Frontend has no unit-test runner.** Correctness is enforced by strict typechecking and a
+  clean production build; the backend carries the automated test suite (108 tests).
+- **Evaluation requires a working LLM.** The dashboard reports real runs only and shows
+  "Not evaluated" when none exist; it never displays fabricated metrics.
+
+---
+
+## 15. Future Improvements
 
 - Real authentication (JWT/session-based) and multi-user account management
-- OCR fallback for scanned PDFs (e.g. via Tesseract)
 - Reranking step (e.g. a cross-encoder) after initial vector retrieval for higher
   precision on longer documents
 - Streaming chat responses (SSE) instead of request/response
-- Document comparison (diff two versions of a contract)
 - Exportable PDF/Word report of the full analysis
-- Multi-document chat ("compare these two NDAs")
-- Alembic migrations for schema changes in production
+- Alembic migrations for richer (non-additive) schema changes in production
 - Rate limiting and per-user upload quotas
+- Frontend unit tests (e.g. Vitest + Testing Library) alongside the backend suite
 
 ---
 

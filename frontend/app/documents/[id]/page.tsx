@@ -1,19 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, AlertTriangle, RotateCcw } from "lucide-react";
+import { ArrowLeft, AlertTriangle, RotateCcw, Loader2 } from "lucide-react";
 import { SiteHeader } from "@/components/layout/SiteHeader";
 import { Disclaimer } from "@/components/layout/Disclaimer";
+import { SectionNav, SectionKey } from "@/components/layout/SectionNav";
 import { Badge, riskVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/primitives";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/primitives";
 import { OverviewTab } from "@/components/analysis/OverviewTab";
 import { RisksTab } from "@/components/analysis/RisksTab";
 import { ClausesTab } from "@/components/analysis/ClausesTab";
+import { ObligationsTab } from "@/components/analysis/ObligationsTab";
+import { DatesTab } from "@/components/analysis/DatesTab";
+import { EvidenceTab } from "@/components/analysis/EvidenceTab";
 import { ChatPanel } from "@/components/chatbot/ChatPanel";
+import { ActionCenterTab } from "@/components/action/ActionCenterTab";
+import { NegotiationTab } from "@/components/action/NegotiationTab";
+import { GeneratorTab } from "@/components/action/GeneratorTab";
+import { ComparisonTab } from "@/components/action/ComparisonTab";
+import { DeadlinesTab } from "@/components/action/DeadlinesTab";
+import { ComplianceTab } from "@/components/action/ComplianceTab";
+import { PlanTab } from "@/components/action/PlanTab";
 import { api, ApiError } from "@/lib/api";
-import type { DocumentSummaryCard, SummaryResponse, RiskItem, ClauseItem } from "@/types";
+import type {
+  DocumentSummaryCard,
+  SummaryResponse,
+  RiskItem,
+  ClauseItem,
+  ObligationItem,
+  ActionItem,
+} from "@/types";
 import Link from "next/link";
 
 export default function DocumentAnalysisPage() {
@@ -25,8 +43,20 @@ export default function DocumentAnalysisPage() {
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [risks, setRisks] = useState<RiskItem[] | null>(null);
   const [clauses, setClauses] = useState<ClauseItem[] | null>(null);
+  const [documents, setDocuments] = useState<DocumentSummaryCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [section, setSection] = useState<SectionKey>("analyze");
+  const [analyzeTab, setAnalyzeTab] = useState("summary");
+  const [actTab, setActTab] = useState("actions");
+
+  // Cross-tab handoffs
+  const [focusClauseId, setFocusClauseId] = useState<string | null>(null);
+  const [draftActionId, setDraftActionId] = useState<string | null>(null);
+  const [draftInstructions, setDraftInstructions] = useState<string | null>(null);
+  const [checklistToken, setChecklistToken] = useState(0);
+  const [deadlineToken, setDeadlineToken] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -46,6 +76,10 @@ export default function DocumentAnalysisPage() {
           setSummary(s);
           setRisks(r);
           setClauses(c);
+          api
+            .listDocuments()
+            .then((list) => active && setDocuments(list))
+            .catch(() => {});
         } else if (document.status === "failed") {
           setError(document.error_message || "Document processing failed.");
         } else {
@@ -76,6 +110,37 @@ export default function DocumentAnalysisPage() {
     }
   }
 
+  function handleObligationChanged(updated: ObligationItem) {
+    setSummary((prev) =>
+      prev
+        ? {
+            ...prev,
+            obligations: prev.obligations.map((o) => (o.id === updated.id ? updated : o)),
+          }
+        : prev
+    );
+  }
+
+  function negotiateClause(clause: ClauseItem) {
+    setFocusClauseId(clause.id);
+    setActTab("negotiation");
+    setSection("act");
+  }
+
+  function draftFromAction(action: ActionItem) {
+    setDraftActionId(action.id);
+    setDraftInstructions(
+      action.suggested_action
+        ? `Address this action: ${action.title}. Suggested step: ${action.suggested_action}`
+        : `Address this action: ${action.title}`
+    );
+    setActTab("generator");
+  }
+
+  function draftFromSuggestion() {
+    setActTab("generator");
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       <SiteHeader />
@@ -96,7 +161,7 @@ export default function DocumentAnalysisPage() {
             <div className="flex items-start gap-3">
               <AlertTriangle size={20} className="text-risk-high mt-0.5 shrink-0" />
               <div className="flex-1">
-                <p className="font-medium text-risk-high mb-1">Couldn't load this document</p>
+                <p className="font-medium text-risk-high mb-1">Couldn&apos;t load this document</p>
                 <p className="text-sm text-ink-soft">{error}</p>
                 <Button variant="secondary" size="sm" className="mt-4" onClick={handleRetry}>
                   <RotateCcw size={14} /> Retry analysis
@@ -108,7 +173,7 @@ export default function DocumentAnalysisPage() {
 
         {!loading && !error && doc && summary && risks && clauses && (
           <>
-            <div className="flex flex-wrap items-start justify-between gap-4 mb-8">
+            <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
               <div>
                 <div className="section-label mb-2">Document</div>
                 <h1 className="font-serif text-2xl font-semibold">{doc.filename}</h1>
@@ -123,27 +188,116 @@ export default function DocumentAnalysisPage() {
               </div>
             </div>
 
-            <Tabs defaultValue="overview">
-              <TabsList>
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="risks">Risks ({risks.length})</TabsTrigger>
-                <TabsTrigger value="clauses">Clauses ({clauses.length})</TabsTrigger>
-                <TabsTrigger value="chat">Ask LexClarity</TabsTrigger>
-              </TabsList>
+            <div className="mb-6">
+              <SectionNav
+                value={section}
+                onChange={setSection}
+                analyzeCount={undefined}
+                actCount={undefined}
+              />
+            </div>
 
-              <TabsContent value="overview">
-                <OverviewTab summary={summary} />
-              </TabsContent>
-              <TabsContent value="risks">
-                <RisksTab risks={risks} />
-              </TabsContent>
-              <TabsContent value="clauses">
-                <ClausesTab clauses={clauses} />
-              </TabsContent>
-              <TabsContent value="chat">
-                <ChatPanel documentId={documentId} />
-              </TabsContent>
-            </Tabs>
+            {section === "analyze" && (
+              <Tabs defaultValue="summary" value={analyzeTab} onChange={setAnalyzeTab}>
+                <TabsList>
+                  <TabsTrigger value="summary">Summary</TabsTrigger>
+                  <TabsTrigger value="clauses">Clauses ({clauses.length})</TabsTrigger>
+                  <TabsTrigger value="risks">Risks ({risks.length})</TabsTrigger>
+                  <TabsTrigger value="obligations">
+                    Obligations ({summary.obligations.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="dates">Dates ({summary.important_dates.length})</TabsTrigger>
+                  <TabsTrigger value="chat">Ask LexClarity</TabsTrigger>
+                  <TabsTrigger value="evidence">Evidence</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="summary">
+                  <OverviewTab summary={summary} />
+                </TabsContent>
+                <TabsContent value="clauses">
+                  <ClausesTab
+                    clauses={clauses}
+                    documentId={documentId}
+                    onNegotiate={negotiateClause}
+                  />
+                </TabsContent>
+                <TabsContent value="risks">
+                  <RisksTab risks={risks} documentId={documentId} />
+                </TabsContent>
+                <TabsContent value="obligations">
+                  <ObligationsTab
+                    obligations={summary.obligations}
+                    documentId={documentId}
+                    onChanged={handleObligationChanged}
+                  />
+                </TabsContent>
+                <TabsContent value="dates">
+                  <DatesTab
+                    dates={summary.important_dates}
+                    documentId={documentId}
+                    onReminderCreated={() => setDeadlineToken((t) => t + 1)}
+                  />
+                </TabsContent>
+                <TabsContent value="chat">
+                  <ChatPanel documentId={documentId} />
+                </TabsContent>
+                <TabsContent value="evidence">
+                  <EvidenceTab documentId={documentId} />
+                </TabsContent>
+              </Tabs>
+            )}
+
+            {section === "act" && (
+              <Tabs defaultValue="actions" value={actTab} onChange={setActTab}>
+                <TabsList>
+                  <TabsTrigger value="actions">Action Center</TabsTrigger>
+                  <TabsTrigger value="plan">Plan</TabsTrigger>
+                  <TabsTrigger value="negotiation">Negotiation</TabsTrigger>
+                  <TabsTrigger value="generator">Generator</TabsTrigger>
+                  <TabsTrigger value="deadlines">Deadlines</TabsTrigger>
+                  <TabsTrigger value="compliance">Missing clauses</TabsTrigger>
+                  <TabsTrigger value="comparison">Comparison</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="actions">
+                  <ActionCenterTab
+                    documentId={documentId}
+                    onGenerateDraft={draftFromAction}
+                  />
+                </TabsContent>
+                <TabsContent value="plan">
+                  <PlanTab documentId={documentId} />
+                </TabsContent>
+                <TabsContent value="negotiation">
+                  <NegotiationTab
+                    documentId={documentId}
+                    clauses={clauses}
+                    focusClauseId={focusClauseId}
+                    onDraftFromSuggestion={draftFromSuggestion}
+                  />
+                </TabsContent>
+                <TabsContent value="generator">
+                  <GeneratorTab
+                    documentId={documentId}
+                    prefillActionId={draftActionId}
+                    prefillInstructions={draftInstructions}
+                  />
+                </TabsContent>
+                <TabsContent value="deadlines">
+                  <DeadlinesTab
+                    documentId={documentId}
+                    dates={summary.important_dates}
+                    refreshToken={deadlineToken}
+                  />
+                </TabsContent>
+                <TabsContent value="compliance">
+                  <ComplianceTab documentId={documentId} refreshToken={checklistToken} />
+                </TabsContent>
+                <TabsContent value="comparison">
+                  <ComparisonTab documents={documents} />
+                </TabsContent>
+              </Tabs>
+            )}
 
             <div className="mt-10">
               <Disclaimer />

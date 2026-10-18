@@ -18,6 +18,7 @@ from app.config import settings
 from app.services.embeddings import embed_query
 from app.services.vector_store import get_vector_store
 from app.services.llm import complete_json, LLMError
+from app.services.verification import Passage, verify_answer
 
 SYSTEM_PROMPT = """You are LexClarity, an AI assistant that analyzes legal documents.
 
@@ -59,8 +60,14 @@ def _format_history(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def answer_question(document_id: str, question: str, history: list[dict]) -> dict:
-    """Returns {answer, citations, confidence}."""
+def answer_question(document_id: str, question: str, history: list[dict], ocr_pages: set[int] | None = None) -> dict:
+    """Returns {answer, citations, confidence, verification}.
+
+    After generation, every factual claim in the answer is verified against
+    the retrieved passages by the Trust & Verification engine; the result is
+    returned alongside the answer so unsupported claims are visible.
+    """
+    ocr_pages = ocr_pages or set()
     query_emb = embed_query(question)
     store = get_vector_store()
     retrieved = store.query(document_id, query_emb, top_k=settings.RETRIEVAL_TOP_K)
@@ -72,6 +79,7 @@ def answer_question(document_id: str, question: str, history: list[dict]) -> dic
             "answer": "I couldn't find this information in the uploaded document.",
             "citations": [],
             "confidence": "not_found",
+            "verification": {"overall": "insufficient", "claims": []},
         }
 
     context = "\n\n".join(
@@ -98,6 +106,7 @@ Respond with the JSON object format specified in your instructions."""
             "answer": f"I ran into a problem generating an answer: {e}",
             "citations": [],
             "confidence": "low_confidence",
+            "verification": {"overall": "insufficient", "claims": []},
         }
 
     if not isinstance(result, dict):
@@ -105,23 +114,51 @@ Respond with the JSON object format specified in your instructions."""
             "answer": "I couldn't generate a reliable answer from the document. Please try rephrasing your question.",
             "citations": [],
             "confidence": "low_confidence",
+            "verification": {"overall": "insufficient", "claims": []},
         }
 
     citations = result.get("citations") or []
-    # attach snippet text for UI display, matched back to retrieved chunks
+    # attach snippet text for UI display, matched back to retrieved chunks;
+    # citations pointing at chunks that were NOT retrieved are flagged so a
+    # model can never invent a source reference.
     by_id = {r.chunk_id: r for r in relevant}
     enriched = []
     for c in citations:
         chunk = by_id.get(c.get("chunk_id"))
         enriched.append({
-            "chunk_id": c.get("chunk_id"),
-            "page_number": c.get("page_number") or (chunk.page_number if chunk else None),
-            "section_reference": c.get("section") or (chunk.section_heading if chunk else None),
+            "chunk_id": c.get("chunk_id") if chunk else None,
+            "page_number": (c.get("page_number") or chunk.page_number) if chunk else None,
+            "section_reference": (c.get("section") or (chunk.section_heading if chunk else None)),
             "snippet": (chunk.text[:220] + "…") if chunk and len(chunk.text) > 220 else (chunk.text if chunk else None),
+            "verified": chunk is not None,
         })
+        if chunk is None:
+            enriched[-1]["warning"] = "This reference could not be matched to a retrieved passage and is not shown as a source."
+
+    answer_text = result.get("answer", "").strip() or "I couldn't find this information in the uploaded document."
+
+    # --- Claim verification against retrieved evidence ---
+    passages = [
+        Passage(
+            text=r.text,
+            similarity=r.similarity,
+            chunk_id=r.chunk_id,
+            page_number=r.page_number,
+            section_heading=r.section_heading,
+            ocr_used=r.page_number in ocr_pages,
+        )
+        for r in relevant
+    ]
+    verification = verify_answer(answer_text, passages)
+
+    # A contradicted answer must not be presented as a reliable answer.
+    confidence = result.get("confidence", "answered")
+    if verification["overall"] == "contradicted" and confidence == "answered":
+        confidence = "low_confidence"
 
     return {
-        "answer": result.get("answer", "").strip() or "I couldn't find this information in the uploaded document.",
+        "answer": answer_text,
         "citations": enriched,
-        "confidence": result.get("confidence", "answered"),
+        "confidence": confidence,
+        "verification": verification,
     }

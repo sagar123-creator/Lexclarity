@@ -36,7 +36,14 @@ def chat(document_id: str, body: schemas.ChatRequest, db: Session = Depends(get_
     db.add(user_message)
     db.commit()
 
-    result = answer_question(doc.id, body.message, history)
+    ocr_pages = {
+        p.page_number
+        for p in db.query(models.DocumentPage).filter(
+            models.DocumentPage.document_id == doc.id,
+            models.DocumentPage.ocr_used == True,  # noqa: E712
+        ).all()
+    }
+    result = answer_question(doc.id, body.message, history, ocr_pages=ocr_pages)
 
     assistant_message = models.Message(
         conversation_id=conversation.id,
@@ -46,6 +53,21 @@ def chat(document_id: str, body: schemas.ChatRequest, db: Session = Depends(get_
         confidence=result["confidence"],
     )
     db.add(assistant_message)
+
+    # Persist claim verifications for auditability.
+    for claim in (result.get("verification") or {}).get("claims", []):
+        db.add(models.Verification(
+            document_id=doc.id,
+            subject_type="answer",
+            subject_id=assistant_message.id,
+            claim_text=claim.get("claim", ""),
+            status=claim.get("status", "insufficient"),
+            method=claim.get("method", "unavailable"),
+            score=claim.get("score"),
+            explanation=claim.get("explanation", ""),
+            evidence_chunk_ids=[claim["evidence_chunk_id"]] if claim.get("evidence_chunk_id") else [],
+            evidence_summary=claim.get("evidence_excerpt"),
+        ))
     db.commit()
 
     return schemas.ChatResponse(
@@ -53,6 +75,7 @@ def chat(document_id: str, body: schemas.ChatRequest, db: Session = Depends(get_
         answer=result["answer"],
         citations=[schemas.CitationOut(**c) for c in result["citations"]],
         confidence=result["confidence"],
+        verification=result.get("verification"),
     )
 
 

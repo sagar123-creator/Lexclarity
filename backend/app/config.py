@@ -48,12 +48,33 @@ class Settings:
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
 
     # --- LLM ---
-    # LLM_PROVIDER: "ollama", "anthropic", "openai", or "gemini"
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama").lower()
+    # LLM_PROVIDER: "gemini", "groq", "ollama", "anthropic", or "openai"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini").lower()
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen2.5:7b")
-    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-3.6-flash")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
+    # Transient provider failures (5xx, rate limits, timeouts) are retried
+    # this many times with exponential backoff starting at LLM_RETRY_BACKOFF_SECONDS.
+    LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    LLM_RETRY_BACKOFF_SECONDS: float = float(os.getenv("LLM_RETRY_BACKOFF_SECONDS", "1.5"))
+    # Rate-limit (429 / token-quota) errors only clear when the provider's
+    # rolling window rolls over (~60s), so they get a longer dedicated backoff
+    # and more attempts than ordinary 5xx/timeout transients. This is what lets
+    # a small free-tier tokens-per-minute budget (e.g. Groq's 8k TPM) survive a
+    # back-to-back multi-stage pipeline instead of failing after ~10s of retries.
+    LLM_RATE_LIMIT_BACKOFF_SECONDS: float = float(
+        os.getenv("LLM_RATE_LIMIT_BACKOFF_SECONDS", "12.0")
+    )
+    LLM_RATE_LIMIT_BACKOFF_MAX_SECONDS: float = float(
+        os.getenv("LLM_RATE_LIMIT_BACKOFF_MAX_SECONDS", "45.0")
+    )
+    LLM_RATE_LIMIT_RETRIES: int = int(os.getenv("LLM_RATE_LIMIT_RETRIES", "5"))
+    # Client-side pacing against the provider's tokens-per-minute budget.
+    # 0 disables throttling. Groq's free tier meters ~8000 tokens/min, so we
+    # pace just under that to avoid 429s entirely instead of retrying after
+    # them. Set to your plan's TPM (or 0 for local/Ollama).
+    LLM_TOKEN_BUDGET_PER_MINUTE: float = float(os.getenv("LLM_TOKEN_BUDGET_PER_MINUTE", "7000"))
 
     # --- Chunking ---
     CHUNK_SIZE_TOKENS: int = int(os.getenv("CHUNK_SIZE_TOKENS", "350"))
@@ -62,6 +83,25 @@ class Settings:
     # --- RAG retrieval ---
     RETRIEVAL_TOP_K: int = int(os.getenv("RETRIEVAL_TOP_K", "6"))
     RETRIEVAL_MIN_SIMILARITY: float = float(os.getenv("RETRIEVAL_MIN_SIMILARITY", "0.25"))
+    WORKSPACE_RETRIEVAL_TOP_K: int = int(os.getenv("WORKSPACE_RETRIEVAL_TOP_K", "12"))
+
+    # --- OCR (optional fallback for scanned PDFs) ---
+    OCR_ENABLED: bool = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
+    OCR_LANG: str = os.getenv("OCR_LANG", "eng")
+
+    # --- Trust & verification engine ---
+    # VERIFIER_PROVIDER: "auto" (NLI model if loadable, else LLM), "nli", "llm", "off"
+    VERIFIER_PROVIDER: str = os.getenv("VERIFIER_PROVIDER", "auto").lower()
+    VERIFIER_NLI_MODEL: str = os.getenv("VERIFIER_NLI_MODEL", "cross-encoder/nli-MiniLM2-L6-H768")
+    # Minimum retrieval similarity before a passage may be used as evidence.
+    VERIFICATION_MIN_SIMILARITY: float = float(os.getenv("VERIFICATION_MIN_SIMILARITY", "0.20"))
+    # A claim's supporting passage must match at least this well for "supported".
+    VERIFICATION_SUPPORT_THRESHOLD: float = float(os.getenv("VERIFICATION_SUPPORT_THRESHOLD", "0.35"))
+
+    # --- Evaluation ---
+    EVAL_DATASET_PATH: str = os.getenv(
+        "EVAL_DATASET_PATH", str(BASE_DIR / "evaluation" / "datasets" / "sample_dataset.jsonl")
+    )
 
     # --- Auth (simplified demo auth; see README for production notes) ---
     DEMO_USER_ID: str = os.getenv("DEMO_USER_ID", "demo-user")
