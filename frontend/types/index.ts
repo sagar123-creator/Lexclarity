@@ -5,7 +5,17 @@ export type DocumentStatus =
   | "embedding"
   | "analyzing"
   | "ready"
-  | "failed";
+  | "failed"
+  | "stopped";
+
+/** Statuses in which a pipeline run currently owns the document. */
+export const ACTIVE_STATUSES: readonly DocumentStatus[] = [
+  "uploaded",
+  "extracting",
+  "chunking",
+  "embedding",
+  "analyzing",
+];
 
 export interface DocumentSummaryCard {
   id: string;
@@ -328,52 +338,6 @@ export interface Comparison {
   created_at: string;
 }
 
-// --- Workspaces ---
-
-export interface Workspace {
-  id: string;
-  name: string;
-  description?: string | null;
-  created_at: string;
-}
-
-export interface WorkspaceDetail extends Workspace {
-  documents: DocumentSummaryCard[];
-}
-
-export interface WorkspaceChatResponse {
-  answer: string;
-  citations: Citation[];
-  confidence: string;
-  conflicts: {
-    topic: string;
-    document_a: string;
-    statement_a: string;
-    document_b: string;
-    statement_b: string;
-  }[];
-  verification?: unknown;
-}
-
-export interface TimelineEntry {
-  date?: string | null;
-  date_value?: string | null;
-  label: string;
-  document_id?: string | null;
-  document_name?: string | null;
-  page_number?: number | null;
-  [key: string]: unknown;
-}
-
-export interface WorkspaceObligation {
-  party_name: string;
-  obligation_text: string;
-  document_id?: string | null;
-  document_name?: string | null;
-  page_number?: number | null;
-  [key: string]: unknown;
-}
-
 // --- Action plan ---
 
 export interface PlanItem {
@@ -396,23 +360,3 @@ export interface ActionPlan {
   disclaimer: string;
 }
 
-// --- Evaluation ---
-
-export interface EvaluationRun {
-  id: string;
-  dataset_name: string;
-  status: string;
-  error_message?: string | null;
-  metrics?: Record<string, unknown> | null;
-  started_at: string;
-  finished_at?: string | null;
-}
-
-export interface EvaluationStatus {
-  evaluated: boolean;
-  message?: string;
-  run_id?: string;
-  dataset_name?: string;
-  metrics?: Record<string, unknown> | null;
-  finished_at?: string | null;
-}

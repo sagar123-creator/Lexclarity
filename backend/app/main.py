@@ -6,8 +6,7 @@ from app.config import settings
 from app.database import init_db
 from app.api import (
     upload, analysis, chat, evidence, verification, actions,
-    generator, negotiation, deadlines, checklist, compare, workspaces, plan,
-    evaluation,
+    generator, negotiation, deadlines, checklist, compare, plan,
 )
 
 app = FastAPI(
@@ -47,9 +46,7 @@ app.include_router(negotiation.router)
 app.include_router(deadlines.router)
 app.include_router(checklist.router)
 app.include_router(compare.router)
-app.include_router(workspaces.router)
 app.include_router(plan.router)
-app.include_router(evaluation.router)
 
 
 @app.get("/")

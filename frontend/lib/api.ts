@@ -17,14 +17,7 @@ import type {
   ChecklistItem,
   Comparison,
   ComparisonSummary,
-  Workspace,
-  WorkspaceDetail,
-  WorkspaceChatResponse,
-  TimelineEntry,
-  WorkspaceObligation,
   ActionPlan,
-  EvaluationRun,
-  EvaluationStatus,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -87,6 +80,17 @@ export const api = {
   retryAnalysis: (id: string) =>
     request<{ document_id: string; status: string; error_message?: string }>(
       `/api/documents/${id}/analyze`,
+      { method: "POST" }
+    ),
+
+  /**
+   * Stop an in-flight analysis. A live run settles as `stopped` at its next
+   * stage boundary, so the returned status may still be an active one — poll
+   * `getDocument` until it leaves the active set.
+   */
+  stopAnalysis: (id: string) =>
+    request<{ document_id: string; status: string; error_message?: string }>(
+      `/api/documents/${id}/stop`,
       { method: "POST" }
     ),
 
@@ -215,50 +219,6 @@ export const api = {
 
   getComparison: (comparisonId: string) =>
     request<Comparison>(`/api/compare/${comparisonId}`),
-
-  // --- Workspaces ---
-  listWorkspaces: () => request<Workspace[]>("/api/workspaces"),
-
-  createWorkspace: (name: string, description?: string) =>
-    request<Workspace>("/api/workspaces", {
-      method: "POST",
-      body: JSON.stringify({ name, description }),
-    }),
-
-  getWorkspace: (workspaceId: string) =>
-    request<WorkspaceDetail>(`/api/workspaces/${workspaceId}`),
-
-  addDocumentToWorkspace: (workspaceId: string, documentId: string) =>
-    request<WorkspaceDetail>(`/api/workspaces/${workspaceId}/documents`, {
-      method: "POST",
-      body: JSON.stringify({ document_id: documentId }),
-    }),
-
-  removeDocumentFromWorkspace: (workspaceId: string, documentId: string) =>
-    request<WorkspaceDetail>(`/api/workspaces/${workspaceId}/documents/${documentId}`, {
-      method: "DELETE",
-    }),
-
-  searchWorkspace: (workspaceId: string, message: string) =>
-    request<WorkspaceChatResponse>(`/api/workspaces/${workspaceId}/search`, {
-      method: "POST",
-      body: JSON.stringify({ message }),
-    }),
-
-  getWorkspaceTimeline: (workspaceId: string) =>
-    request<{ timeline: TimelineEntry[] }>(`/api/workspaces/${workspaceId}/timeline`),
-
-  getWorkspaceObligations: (workspaceId: string) =>
-    request<{ obligations: WorkspaceObligation[] }>(
-      `/api/workspaces/${workspaceId}/obligations`
-    ),
-
-  // --- Evaluation ---
-  getEvaluationStatus: () => request<EvaluationStatus>("/api/evaluation/status"),
-
-  listEvaluationRuns: () => request<EvaluationRun[]>("/api/evaluation/runs"),
-
-  runEvaluation: () => request<EvaluationRun>("/api/evaluation/run", { method: "POST" }),
 };
 
 export { ApiError, API_BASE };

@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { AlertTriangle, RotateCcw, XCircle } from "lucide-react";
 import { SiteHeader } from "@/components/layout/SiteHeader";
 import { Disclaimer } from "@/components/layout/Disclaimer";
 import { UploadDropzone } from "@/components/upload/UploadDropzone";
 import { ProcessingStepper } from "@/components/upload/ProcessingStepper";
 import { Card, Button } from "@/components/ui/primitives";
 import { api, ApiError } from "@/lib/api";
+import { ACTIVE_STATUSES } from "@/types";
 import type { DocumentStatus } from "@/types";
 
 export default function UploadPage() {
@@ -18,6 +19,7 @@ export default function UploadPage() {
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [status, setStatus] = useState<DocumentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -48,17 +50,36 @@ export default function UploadPage() {
       try {
         const doc = await api.getDocument(id);
         setStatus(doc.status);
+        if (!ACTIVE_STATUSES.includes(doc.status)) setStopping(false);
         if (doc.status === "ready") {
           clearInterval(pollRef.current!);
           setTimeout(() => router.push(`/documents/${id}`), 600);
         } else if (doc.status === "failed") {
           clearInterval(pollRef.current!);
           setError(doc.error_message || "Processing failed.");
+        } else if (doc.status === "stopped") {
+          clearInterval(pollRef.current!);
         }
       } catch {
         // transient network error while polling — keep trying
       }
     }, 2000);
+  }
+
+  async function handleStop() {
+    if (!documentId) return;
+    setStopping(true);
+    try {
+      await api.stopAnalysis(documentId);
+      // Keep polling: a run that is in flight settles as "stopped" at its
+      // next stage boundary, and the interval above notices when it does.
+      const current = await api.getDocument(documentId);
+      setStatus(current.status);
+      if (!ACTIVE_STATUSES.includes(current.status)) setStopping(false);
+    } catch (e) {
+      setStopping(false);
+      setError(e instanceof ApiError ? e.message : "Couldn't stop processing.");
+    }
   }
 
   async function handleRetry() {
@@ -89,13 +110,53 @@ export default function UploadPage() {
             <UploadDropzone onFileSelected={handleUpload} disabled={uploading} />
           )}
 
-          {documentId && status && status !== "failed" && (
+          {documentId && status && status !== "failed" && status !== "stopped" && (
             <div>
               <p className="text-sm text-ink-faint mb-6">
                 Processing <span className="font-medium text-ink">{file?.name}</span>…
                 this usually takes under a minute.
               </p>
               <ProcessingStepper status={status} />
+              {ACTIVE_STATUSES.includes(status) && (
+                <div className="mt-6 border-t border-line pt-4">
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    disabled={stopping}
+                    className="inline-flex items-center gap-1.5 text-sm text-ink-faint hover:text-risk-high disabled:opacity-60 disabled:hover:text-ink-faint transition-colors"
+                  >
+                    <XCircle size={14} />
+                    {stopping ? "Stopping…" : "Stop processing"}
+                  </button>
+                  <p className="mt-1.5 text-xs text-ink-faint">
+                    Stops after the step currently running. Everything analyzed so far
+                    is kept, and you can resume the rest later.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {documentId && status === "stopped" && (
+            <div>
+              <div className="flex items-start gap-2.5 rounded-md border border-line bg-paper p-4">
+                <XCircle size={16} className="text-ink-soft mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-ink mb-1">Processing stopped</p>
+                  <p className="text-sm text-ink-soft">
+                    Everything analyzed so far is kept. Resume to finish the sections
+                    that are still missing.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button onClick={handleRetry}>
+                  <RotateCcw size={14} /> Resume analysis
+                </Button>
+                <Button variant="secondary" onClick={() => router.push("/dashboard")}>
+                  Back to dashboard
+                </Button>
+              </div>
             </div>
           )}
 

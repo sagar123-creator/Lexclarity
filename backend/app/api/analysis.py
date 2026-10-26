@@ -5,19 +5,74 @@ from app import models, schemas
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.api.upload import _get_owned_document
+from app.services import cancellation
 from app.services.pipeline import process_document
 
 router = APIRouter(prefix="/api/documents", tags=["analysis"])
 
+# Statuses in which a pipeline run owns the document — the brief "uploaded"
+# window (background task queued but not started) is included, so an analysis
+# can be stopped before it has done any work.
+ACTIVE_STATUSES = ("uploaded", "extracting", "chunking", "embedding", "analyzing")
+
 
 @router.post("/{document_id}/analyze", response_model=schemas.AnalysisStatusOut)
-def trigger_analysis(document_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Manually (re)trigger the processing pipeline, e.g. after a failure."""
+def trigger_analysis(
+    document_id: str,
+    full: bool = False,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Manually (re)trigger the processing pipeline, e.g. after a failure.
+
+    By default a re-run *resumes*: sections that already produced results are
+    kept and only the missing ones are retried, so a retry while the provider's
+    per-day quota is scarce actually reaches them instead of re-spending the
+    budget on sections that already work. Pass ``?full=true`` to rebuild the
+    whole analysis from scratch.
+    """
     doc = _get_owned_document(db, document_id, user)
-    if doc.status in ("extracting", "chunking", "embedding", "analyzing"):
+    if doc.status in ACTIVE_STATUSES:
         return schemas.AnalysisStatusOut(document_id=doc.id, status=doc.status)
-    process_document(db, doc)
+    # A deliberately-started run always begins from a clean slate: drop any stop
+    # request left over from the run the user is now asking us to (re)start.
+    cancellation.clear_stop(doc.id)
+    process_document(db, doc, resume_missing=not full)
     db.refresh(doc)
+    return schemas.AnalysisStatusOut(document_id=doc.id, status=doc.status, error_message=doc.error_message)
+
+
+@router.post("/{document_id}/stop", response_model=schemas.AnalysisStatusOut)
+def stop_analysis(
+    document_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Stop processing this document.
+
+    Stopping is cooperative: a run that is actually in flight settles as
+    ``stopped`` at its next stage boundary (an LLM call already under way
+    finishes first), so the status here may still read ``analyzing`` for a few
+    seconds — the UI polls ``GET /api/documents/{id}`` until it settles.
+    Everything written before the stop is kept, and resuming re-runs only the
+    sections that are still missing.
+
+    A document whose status says it is processing but has *no* live run (a row
+    left behind by a restart) is settled immediately instead of waiting for a
+    boundary that will never come.
+    """
+    doc = _get_owned_document(db, document_id, user)
+    if doc.status == "stopped":
+        return schemas.AnalysisStatusOut(document_id=doc.id, status=doc.status, error_message=doc.error_message)
+    if doc.status not in ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail=f"Document is not being processed (status: {doc.status}).")
+
+    cancellation.request_stop(doc.id)
+    if not cancellation.is_running(doc.id):
+        doc.status = "stopped"
+        doc.error_message = cancellation.STOPPED_MESSAGE
+        db.commit()
+        db.refresh(doc)
     return schemas.AnalysisStatusOut(document_id=doc.id, status=doc.status, error_message=doc.error_message)
 
 
@@ -64,5 +119,8 @@ def get_clauses(document_id: str, db: Session = Depends(get_db), user: models.Us
 def _require_ready(doc: models.Document):
     if doc.status == "failed":
         raise HTTPException(status_code=422, detail=doc.error_message or "Document processing failed.")
-    if doc.status != "ready":
+    # A stopped document keeps whatever its completed stages produced, so the
+    # partial results stay readable (the UI shows a "stopped" banner over them
+    # and offers to resume the analysis).
+    if doc.status not in ("ready", "stopped"):
         raise HTTPException(status_code=409, detail=f"Document is still processing (status: {doc.status}).")

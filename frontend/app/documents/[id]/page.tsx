@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, AlertTriangle, RotateCcw, Loader2 } from "lucide-react";
+import { ArrowLeft, AlertTriangle, RotateCcw, Loader2, XCircle } from "lucide-react";
 import { SiteHeader } from "@/components/layout/SiteHeader";
 import { Disclaimer } from "@/components/layout/Disclaimer";
 import { SectionNav, SectionKey } from "@/components/layout/SectionNav";
@@ -46,6 +46,9 @@ export default function DocumentAnalysisPage() {
   const [documents, setDocuments] = useState<DocumentSummaryCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Bumped after a resumed analysis to re-run the loader in place.
+  const [reloadToken, setReloadToken] = useState(0);
+  const [resuming, setResuming] = useState(false);
 
   const [section, setSection] = useState<SectionKey>("analyze");
   const [analyzeTab, setAnalyzeTab] = useState("summary");
@@ -61,12 +64,17 @@ export default function DocumentAnalysisPage() {
   useEffect(() => {
     let active = true;
     async function load() {
+      setLoading(true);
+      setError(null);
       try {
         const document = await api.getDocument(documentId);
         if (!active) return;
         setDoc(document);
 
-        if (document.status === "ready") {
+        // A stopped document stays readable: it keeps whatever sections the
+        // completed stages produced (the page shows a banner offering to
+        // resume the rest).
+        if (document.status === "ready" || document.status === "stopped") {
           const [s, r, c] = await Promise.all([
             api.getSummary(documentId),
             api.getRisks(documentId),
@@ -96,7 +104,7 @@ export default function DocumentAnalysisPage() {
     return () => {
       active = false;
     };
-  }, [documentId, router]);
+  }, [documentId, router, reloadToken]);
 
   async function handleRetry() {
     setError(null);
@@ -107,6 +115,24 @@ export default function DocumentAnalysisPage() {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Retry failed.");
       setLoading(false);
+    }
+  }
+
+  /**
+   * Resume a stopped analysis. `POST /analyze` runs the pipeline to completion
+   * before it returns, so when it resolves the document is either finished or
+   * failed — either way the loader above re-reads the authoritative state.
+   */
+  async function handleResume() {
+    setResuming(true);
+    setError(null);
+    try {
+      await api.retryAnalysis(documentId);
+      setReloadToken((token) => token + 1);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Resume failed.");
+    } finally {
+      setResuming(false);
     }
   }
 
@@ -187,6 +213,42 @@ export default function DocumentAnalysisPage() {
                 )}
               </div>
             </div>
+
+            {doc.status === "stopped" && (
+              <div className="mb-6 rounded-lg border border-line bg-paper p-4">
+                <div className="flex flex-wrap items-start gap-3">
+                  <XCircle size={18} className="text-ink-soft mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-[220px]">
+                    <p className="text-sm font-medium text-ink mb-1">
+                      Processing was stopped
+                    </p>
+                    <p className="text-sm text-ink-soft">
+                      {doc.error_message ||
+                        "Analysis was stopped before it finished."}{" "}
+                      Sections shown here are complete; the rest can be finished with
+                      a resume.
+                    </p>
+                  </div>
+                  <Button size="sm" onClick={handleResume} disabled={resuming}>
+                    {resuming ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" /> Re-running…
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw size={14} /> Resume analysis
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {resuming && (
+                  <p className="mt-2 pl-[30px] text-xs text-ink-faint">
+                    Only the missing sections are being re-run — the ones above stay
+                    as they are. This page refreshes when it finishes.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="mb-6">
               <SectionNav

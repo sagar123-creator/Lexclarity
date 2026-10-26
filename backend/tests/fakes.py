@@ -4,7 +4,7 @@ fake embedding/LLM layers so tests are deterministic and offline.
 
 The fake vector store scores by keyword overlap between the "query text"
 (returned by the fake embedder) and stored chunk text — good enough to
-exercise retrieval filtering, citation plumbing and workspace scoping.
+exercise retrieval filtering and citation plumbing.
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ class FakeVectorStore:
 # Modules that bound their own imports of embed_query / get_vector_store.
 _EMBED_MODULES = [
     "app.services.chatbot", "app.services.extractor", "app.services.risk_analyzer",
-    "app.services.summarizer", "app.services.workspace_service", "app.services.evaluation",
+    "app.services.summarizer",
     "app.services.embeddings",
 ]
 # Modules that bind get_vector_store into their own namespace via `from ... import`.
@@ -83,13 +83,13 @@ _EMBED_MODULES = [
 # already redirects it. Patching a non-existent `pipeline.get_vector_store` raises.
 _STORE_MODULES = [
     "app.services.chatbot", "app.services.extractor", "app.services.risk_analyzer",
-    "app.services.summarizer", "app.services.workspace_service", "app.services.evaluation",
+    "app.services.summarizer",
     "app.services.missing_clauses", "app.services.vector_store",
 ]
 _LLM_MODULES = [
     "app.services.chatbot", "app.services.extractor", "app.services.risk_analyzer",
     "app.services.summarizer", "app.services.missing_clauses", "app.services.generator",
-    "app.services.negotiation", "app.services.comparator", "app.services.workspace_service",
+    "app.services.negotiation", "app.services.comparator",
     "app.services.llm",
 ]
 
@@ -167,6 +167,11 @@ class DatabaseTestCase(unittest.TestCase):
         ]
         for p in cls._patches:
             p.start()
+
+        # Importing the models registers every table on Base.metadata — without
+        # this, create_all() silently creates nothing when a test module doesn't
+        # happen to import app.models first.
+        import app.models  # noqa: F401
 
         Base.metadata.create_all(bind=cls.test_engine)
 

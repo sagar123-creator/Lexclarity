@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api", tags=["negotiation"])
 @router.post("/documents/{document_id}/negotiate", response_model=schemas.ClauseSuggestionOut)
 def negotiate(document_id: str, body: schemas.NegotiateRequest, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     doc = _get_owned_document(db, document_id, user)
-    if doc.status != "ready":
+    if doc.status not in ("ready", "stopped"):
         raise HTTPException(status_code=409, detail=f"Document is still processing (status: {doc.status}).")
     clause = (
         db.query(models.Clause)

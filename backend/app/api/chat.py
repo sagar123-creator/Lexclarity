@@ -13,7 +13,9 @@ router = APIRouter(prefix="/api/documents", tags=["chat"])
 @router.post("/{document_id}/chat", response_model=schemas.ChatResponse)
 def chat(document_id: str, body: schemas.ChatRequest, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     doc = _get_owned_document(db, document_id, user)
-    if doc.status != "ready":
+    # "stopped" is allowed too: the chunks up to the stop still exist, and an
+    # off-topic question simply comes back as "not found".
+    if doc.status not in ("ready", "stopped"):
         raise HTTPException(status_code=409, detail=f"Document is still processing (status: {doc.status}). Please wait before chatting.")
 
     if body.conversation_id:
@@ -43,7 +45,7 @@ def chat(document_id: str, body: schemas.ChatRequest, db: Session = Depends(get_
             models.DocumentPage.ocr_used == True,  # noqa: E712
         ).all()
     }
-    result = answer_question(doc.id, body.message, history, ocr_pages=ocr_pages)
+    result = answer_question(doc.id, body.message, history, ocr_pages=ocr_pages, document_name=doc.filename)
 
     assistant_message = models.Message(
         conversation_id=conversation.id,

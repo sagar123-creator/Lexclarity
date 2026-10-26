@@ -28,7 +28,7 @@ def get_checklist(document_id: str, db: Session = Depends(get_db), user: models.
 def run_checklist(document_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """(Re-)run the missing-clause checklist for this document."""
     doc = _get_owned_document(db, document_id, user)
-    if doc.status != "ready":
+    if doc.status not in ("ready", "stopped"):
         from fastapi import HTTPException
         raise HTTPException(status_code=409, detail=f"Document is still processing (status: {doc.status}).")
 

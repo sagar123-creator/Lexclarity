@@ -26,7 +26,7 @@ def verify_claim_endpoint(
     user: models.User = Depends(get_current_user),
 ):
     doc = _get_owned_document(db, document_id, user)
-    if doc.status != "ready":
+    if doc.status not in ("ready", "stopped"):
         raise HTTPException(status_code=409, detail=f"Document is still processing (status: {doc.status}).")
 
     ocr_pages = {p.page_number for p in db.query(models.DocumentPage).filter(

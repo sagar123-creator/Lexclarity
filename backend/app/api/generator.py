@@ -29,7 +29,7 @@ def list_templates():
 @router.post("/documents/{document_id}/drafts", response_model=schemas.DraftOut)
 def create_draft(document_id: str, body: schemas.GenerateDraftRequest, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     doc = _get_owned_document(db, document_id, user)
-    if doc.status != "ready":
+    if doc.status not in ("ready", "stopped"):
         raise HTTPException(status_code=409, detail=f"Document is still processing (status: {doc.status}).")
 
     source_ids = body.source_ids

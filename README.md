@@ -61,12 +61,6 @@ intelligence platform. The UI is split into two sections per document — **ANAL
   wording barely changed. The summary describes textual differences only.
 
 ### Platform
-- **Multi-document workspaces** — group related contracts and ask questions across all of
-  them at once, with per-document citations and explicit conflict flags when documents
-  disagree, plus a cross-document timeline and obligations roll-up.
-- **Accuracy evaluation dashboard** — runs the real pipeline against a labelled dataset and
-  scores risk/clause extraction. Shows **"Not evaluated"** when no real run exists — it
-  never fabricates metrics.
 - **Ownership isolation** — every document and chat request is scoped to its owner
 - **Legal disclaimer** shown throughout the app
 
@@ -128,6 +122,19 @@ Document status moves through `uploaded → extracting → chunking → embeddin
 analyzing → ready` (or `failed`), and the frontend polls `GET /api/documents/{id}`
 to show live progress.
 
+**Stop processing.** Every card in a processing state offers *Stop processing*
+(dashboard card, and the stepper on the upload page) → `POST /api/documents/{id}/stop`.
+Stopping is cooperative: a run that is genuinely in flight settles as `stopped`
+at its next stage boundary (an LLM call already under way finishes first), while
+a row that only *looks* busy — left behind by a restart, no run behind it — is
+settled immediately instead of waiting for a boundary that never comes.
+Everything the completed stages wrote is kept: a `stopped` document stays
+readable and chat-able (the page shows a banner over the partial results), and
+**Resume analysis** re-runs only the sections that are still missing. The stop
+flag and the "is a run live" registry live in-process (`app/services/cancellation.py`),
+which is correct for the single-worker server here; a multi-worker deployment
+would want a shared flag such as a `stop_requested` column on `documents`.
+
 ### RAG chatbot flow (`app/services/chatbot.py`)
 
 ```
@@ -140,18 +147,28 @@ Embed question (same embedding model as documents)
 Semantic search — vector store, filtered to this document_id only
       │
       ▼
-Keep chunks above RETRIEVAL_MIN_SIMILARITY, capped at RETRIEVAL_TOP_K
+Prefer chunks above RETRIEVAL_MIN_SIMILARITY, capped at RETRIEVAL_TOP_K
       │
-      ├── nothing clears the bar ──▶ return "I couldn't find this information
-      │                               in the uploaded document." (no LLM call —
-      │                               this is the anti-hallucination guardrail)
+      ├── none clear the bar ──▶ keep the closest chunks above
+      │                          RETRIEVAL_MIN_SIMILARITY_FLOOR (near-miss band:
+      │                          local embeddings often score genuine matches low,
+      │                          especially on short / single-chunk documents)
+      │
+      ├── none clear the floor either ──▶ return the "I couldn't find anything about
+      │                                    that in this document…" refusal, which
+      │                                    invites a document-related question
+      │                                    (no LLM call — anti-hallucination guardrail)
       ▼
-Build prompt: retrieved chunks + recent conversation history
+Build prompt: retrieved chunks + recent conversation history + the file's name
       │
       ▼
 LLM answers ONLY from the provided excerpts, returns structured JSON:
   { confidence, answer, citations: [{page_number, section, chunk_id}] }
       │
+      ▼
+When the excerpts don't answer (or the question isn't about this document) the
+model returns confidence "not_found" and its reply says the document doesn't
+cover it + asks for a valid document question — it never guesses
       ▼
 Citations enriched with source snippets and returned to the frontend,
 rendered as clickable "Source: Page N — Section" chips under the answer
@@ -206,9 +223,7 @@ lexclarity/
 │   │   │   ├── generator.py         # Draft generation / editing / export
 │   │   │   ├── deadlines.py         # Reminders + obligation task status
 │   │   │   ├── checklist.py         # Missing-clause checklist
-│   │   │   ├── compare.py           # Contract comparison
-│   │   │   ├── workspaces.py        # Multi-document workspaces
-│   │   │   └── evaluation.py        # Accuracy evaluation runs
+│   │   │   └── compare.py           # Contract comparison
 │   │   ├── services/
 │   │   │   ├── document_parser.py   # PDF/DOCX/TXT extraction, page-aware, OCR fallback
 │   │   │   ├── chunking.py          # Sentence-aware chunking with overlap
@@ -225,15 +240,12 @@ lexclarity/
 │   │   │   ├── generator.py         # Draft templates + placeholder invariant
 │   │   │   ├── comparator.py        # Clause diff + risk delta
 │   │   │   ├── missing_clauses.py   # Missing-clause checklist engine
-│   │   │   ├── workspace_service.py # Cross-document search/timeline/obligations
-│   │   │   ├── evaluation.py        # Evaluation dataset runner + metrics
 │   │   │   ├── chatbot.py           # RAG question-answering + citations
 │   │   │   └── pipeline.py          # Orchestrates the full pipeline (+ outage handling)
 │   │   └── utils/
 │   │       ├── text_cleaning.py     # Cleaning, sentence splitting, heading detection
 │   │       └── file_validation.py   # Extension/size validation, filename sanitization
 │   ├── tests/                       # unittest suite (108 tests)
-│   ├── evaluation/datasets/         # Labelled QA/risk/clause eval datasets (JSONL)
 │   ├── sample_documents/
 │   │   └── sample_service_agreement.txt
 │   ├── requirements.txt
@@ -245,9 +257,6 @@ lexclarity/
     │   ├── upload/page.tsx          # Upload + live processing status
     │   ├── dashboard/page.tsx       # Document list
     │   ├── documents/[id]/page.tsx  # ANALYZE + ACT tabs
-    │   ├── workspaces/page.tsx      # Workspace list
-    │   ├── workspaces/[id]/page.tsx # Cross-document search/timeline/obligations
-    │   └── evaluation/page.tsx      # Accuracy dashboard ("Not evaluated" when empty)
     ├── components/
     │   ├── upload/                  # Dropzone, processing stepper
     │   ├── dashboard/               # Document cards
@@ -355,13 +364,14 @@ Visit **http://localhost:3000**.
 | `LLM_RATE_LIMIT_RETRIES` | `5` | Attempts for *transient* (per-minute) rate limits before giving up |
 | `LLM_TOKEN_BUDGET_PER_MINUTE` | `0` | Client-side tokens-per-minute pacing (0 = off). Groq's free tier meters ~8000 TPM |
 
-> **Groq free-tier daily quota (TPD).** Beyond the ~8000 TPM window, Groq's free tier enforces a **tokens-per-day** quota (≈200k/day on `openai/gpt-oss-120b`). When it is hit, the API returns `429` with `code: rate_limit_exceeded`, `type: tokens`, and a `retry-after` of many minutes. LexClarity detects this *daily* dimension (vs. per-minute TPM or requests-per-minute RPM) and **fails fast** — it does not blind-retry for minutes, because a per-day quota cannot recover in a 45s backoff. Sections that already completed are **kept**, and the remaining stages are **skipped** and named in `error_message` so you can **Re-analyze** once the daily window resets. A different API key, a higher tier, or a lower `LLM_TOKEN_BUDGET_PER_MINUTE` are the only ways to get more headroom.
+> **Groq free-tier daily quota (TPD).** Beyond the ~8000 TPM window, Groq's free tier enforces a **tokens-per-day** quota (≈200k/day on `openai/gpt-oss-120b`). When it is hit, the API returns `429` with `code: rate_limit_exceeded`, `type: tokens`, and a `retry-after` of many minutes. LexClarity detects this *daily* dimension (vs. per-minute TPM or requests-per-minute RPM) and **fails fast** — it does not blind-retry for minutes, because a per-day quota cannot recover in a 45s backoff. Sections that already completed are **kept**, and the remaining stages are **skipped** and named in `error_message`. **Re-analyze resumes**: it retries *only* the sections named as missing (the ones that already worked are left untouched and cost nothing), so a retry under a scarce daily budget actually reaches them — pass `?full=true` to rebuild everything from scratch instead. A different API key, a higher tier, a model with its own quota (`LLM_MODEL` limits are per model), or a lower `LLM_TOKEN_BUDGET_PER_MINUTE` are the ways to get more headroom.
 | `VERIFIER_PROVIDER` | `auto` | Trust engine: `auto`, `nli`, `llm`, or `off`. `auto` lazily loads a local NLI model and falls back to an LLM judge (labelled as non-proof) |
 | `OCR_ENABLED` | `true` | Tesseract OCR fallback for scanned/image PDFs |
 | `CHUNK_SIZE_TOKENS` | `350` | Approx. words per chunk |
 | `CHUNK_OVERLAP_TOKENS` | `60` | Overlap carried between chunks |
 | `RETRIEVAL_TOP_K` | `6` | Chunks retrieved per question |
-| `RETRIEVAL_MIN_SIMILARITY` | `0.25` | Similarity floor before the chatbot will answer |
+| `RETRIEVAL_MIN_SIMILARITY` | `0.25` | Similarity bar above which a chunk is trusted outright |
+| `RETRIEVAL_MIN_SIMILARITY_FLOOR` | `0.10` | Below-bar chunks still sent to the model, which must refuse if they don't answer |
 | `FRONTEND_ORIGIN` | `http://localhost:3000` | CORS allow-origin |
 
 ### Frontend (`frontend/.env.local`)
@@ -393,8 +403,8 @@ LexClarity database never drops or rewrites data. It is safe to restart repeated
 
 Key new tables/columns introduced by the intelligence platform: `document_pages`
 (full page text — the evidence viewer's source of truth), `action_items`, `drafts`,
-`clause_suggestions`, `reminders`, `checklist_items`, `comparisons`, `workspaces`,
-`workspace_documents`, `evaluation_runs`, plus verification/evidence columns on
+`clause_suggestions`, `reminders`, `checklist_items`, `comparisons`, plus
+verification/evidence columns on
 `risks`, `clauses`, `obligations`, and `important_dates`.
 
 ### Production: PostgreSQL
@@ -428,7 +438,8 @@ Interactive docs are auto-generated by FastAPI at **http://localhost:8000/docs**
 | `POST` | `/api/documents/upload` | Upload a document (multipart/form-data, field `file`) |
 | `GET` | `/api/documents` | List the current user's documents |
 | `GET` | `/api/documents/{id}` | Get a document's status/metadata |
-| `POST` | `/api/documents/{id}/analyze` | (Re-)run the processing pipeline |
+| `POST` | `/api/documents/{id}/analyze` | (Re-)run the processing pipeline. Resumes by default — only sections with no results are retried; `?full=true` rebuilds everything |
+| `POST` | `/api/documents/{id}/stop` | Stop processing (cooperative: a live run settles at its next stage boundary, a stale row settles at once). Partial results are kept and remain readable |
 | `GET` | `/api/documents/{id}/summary` | Executive summary, parties, obligations, dates |
 | `GET` | `/api/documents/{id}/risks` | Risk analysis items |
 | `GET` | `/api/documents/{id}/clauses` | Extracted key clauses |
@@ -456,15 +467,6 @@ Interactive docs are auto-generated by FastAPI at **http://localhost:8000/docs**
 | `POST` | `/api/documents/{id}/checklist/run` | (Re)run the missing-clause checklist |
 | `POST` | `/api/compare` | Compare two analyzed documents |
 | `GET` | `/api/compare` / `/api/compare/{id}` | List / get comparisons |
-| `GET`/`POST` | `/api/workspaces` | List / create workspaces |
-| `GET` | `/api/workspaces/{id}` | Workspace detail with documents |
-| `POST`/`DELETE` | `/api/workspaces/{id}/documents[/{doc_id}]` | Add / remove a document |
-| `POST` | `/api/workspaces/{id}/search` | Cross-document question answering |
-| `GET` | `/api/workspaces/{id}/timeline` | Cross-document timeline |
-| `GET` | `/api/workspaces/{id}/obligations` | Cross-document obligations |
-| `GET` | `/api/evaluation/status` | Latest evaluation status ("Not evaluated" if none) |
-| `GET` | `/api/evaluation/runs` | Evaluation run history |
-| `POST` | `/api/evaluation/run` | Run the evaluation (executes the real pipeline) |
 
 ### Chat request/response example
 
@@ -501,12 +503,16 @@ See **Section 2 (Architecture) → RAG chatbot flow** above for the full flow. I
 1. Nothing is hardcoded — every answer is generated live from retrieved chunks.
 2. The vector search is always filtered to the current `document_id`, so one user's
    document is never used to answer another document's questions.
-3. If retrieved-chunk similarity is below `RETRIEVAL_MIN_SIMILARITY`, the chatbot skips
-   the LLM call entirely and returns "I couldn't find this information in the uploaded
-   document." — this is the primary anti-hallucination mechanism.
-4. The system prompt (`app/services/chatbot.py`) explicitly forbids inventing facts,
-   requires citations, and requires the model to separate "what the document says" from
-   "what it may mean" from "when to consult a lawyer."
+3. Chunks above `RETRIEVAL_MIN_SIMILARITY` are trusted outright. If none clear that bar,
+   the closest chunks above `RETRIEVAL_MIN_SIMILARITY_FLOOR` are still sent (local
+   embeddings often score real matches below 0.25 on short documents); if nothing clears
+   the floor either, the chatbot skips the LLM call and returns a refusal that invites a
+   document-related question. That refusal path — plus the model's own "not_found"
+   verdict — is the primary anti-hallucination mechanism.
+4. The system prompt (`app/services/chatbot.py`) requires a direct, plain-English answer
+   first (not a paste of the document text), forbids inventing facts, requires citations,
+   and requires the model to separate "what the document says" from "what it may mean"
+   from "when to consult a lawyer."
 5. Conversation history (last 6 turns) is included in the prompt so follow-up questions
    ("What happens if I don't give that notice?") retain context.
 
@@ -517,7 +523,7 @@ See **Section 2 (Architecture) → RAG chatbot flow** above for the full flow. I
 ### Backend (Python)
 
 The backend has a `unittest` suite covering the pipeline, trust engine, risk rubric,
-comparator, generator placeholder invariant, migrations, workspaces, and more. Tests run
+comparator, generator placeholder invariant, migrations, and more. Tests run
 offline — they use an isolated temp SQLite database, a `FakeVectorStore`, and scripted
 `fake_llm` responders, and they patch `VERIFIER_PROVIDER="off"` so no NLI model is ever
 downloaded during tests.
@@ -541,14 +547,14 @@ enforced by a strict typecheck and a production build, both of which pass clean:
 ```bash
 cd frontend
 npx tsc --noEmit     # typecheck — passes with 0 errors
-npm run build        # production build — compiles and generates all 8 routes
+npm run build        # production build — compiles and generates every route
 ```
 
 ### End-to-end smoke test
 
 An end-to-end script uploads `sample_documents/sample_service_agreement.txt` and exercises
 every major endpoint (summary, risks, clauses, pages, checklist, actions, plan, chat,
-verify-claim, negotiate, drafts, workspaces, compare, evaluation). It requires a **working**
+verify-claim, negotiate, drafts, compare). It requires a **working**
 LLM API key — see the limitations note below.
 
 ---
@@ -560,13 +566,12 @@ LLM API key — see the limitations note below.
 | Upload succeeds but status stays `failed` with "LLM_API_KEY is not set" | Set `LLM_API_KEY` in `backend/.env` and restart the backend |
 | Document fails with "Gemini API quota or rate limit reached" | Your Gemini **free-tier** quota is exhausted (limit ~20 requests; resets after a few hours) or you hit a per-minute rate limit. Transient failures are retried automatically with backoff; persistent quota exhaustion needs a paid plan, a different key, or a different `LLM_PROVIDER`. |
 | Document `failed` with a message listing several stages | The LLM provider was unreachable. Transient errors (5xx / rate limit / timeout) are retried with exponential backoff (`LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_SECONDS`). If **all** stages fail, the document is marked failed with this actionable message; if only some fail, the document still reaches `ready` and the partial-failure note appears in `error_message`. |
-| Document fails with "Groq daily token quota is exhausted" | Your Groq key hit the **tokens-per-day** (TPD) free-tier quota (~200k/day). This is an account/day limit, not a code bug — LexClarity fails fast (no blind retries), keeps completed sections, and names the skipped ones. Wait for the daily window to reset and **Re-analyze**, or use a different key / higher tier. Check `console.groq.com` for your exact usage. |
+| Document fails with "Groq daily token quota is exhausted" | Your Groq key hit the **tokens-per-day** (TPD) free-tier quota (~200k/day). This is an account/day limit, not a code bug — LexClarity fails fast (no blind retries), keeps completed sections, and names the skipped ones. Wait for the daily window to reset and **Re-analyze** (which retries only those missing sections), or switch `LLM_MODEL` — quotas are per model, so a sibling model has its own budget — or use a different key / higher tier. Check `console.groq.com` for your exact usage. |
 | "sentence-transformers is not installed" | Run `pip install -r requirements.txt` again — this installs the local embedding model |
 | Scanned PDF fails with "No extractable text was found" | Install OCR deps (`pip install pymupdf pytesseract` + the Tesseract binary) with `OCR_ENABLED=true`, or upload a text-based PDF |
 | CORS errors in the browser console | Ensure `FRONTEND_ORIGINS` in `backend/.env` matches your frontend URL exactly |
-| Chat always says "I couldn't find this information" | Lower `RETRIEVAL_MIN_SIMILARITY` in `.env` (e.g. to `0.15`), or check the document actually finished processing (`status: ready`) |
+| Chat always says "I couldn't find this information" | Lower `RETRIEVAL_MIN_SIMILARITY` in `.env` (e.g. to `0.15`) — or check `RETRIEVAL_MIN_SIMILARITY_FLOOR` isn't set above it — and check the document actually finished processing (`status: ready`) |
 | First upload is slow | The local embedding model downloads once (~80MB) on first use — subsequent runs are fast |
-| Evaluation page shows "Not evaluated" | This is correct when no run exists. Click "Run evaluation now" (it executes the real pipeline and can take minutes). |
 | `psycopg2` install fails | Install PostgreSQL client headers (`apt install libpq-dev` on Debian/Ubuntu) or use the default SQLite setup instead |
 
 ---
@@ -625,8 +630,6 @@ full pipeline run, then try asking:
   `app/api/auth.py::get_current_user` for real session/JWT auth before production.
 - **Frontend has no unit-test runner.** Correctness is enforced by strict typechecking and a
   clean production build; the backend carries the automated test suite (108 tests).
-- **Evaluation requires a working LLM.** The dashboard reports real runs only and shows
-  "Not evaluated" when none exist; it never displays fabricated metrics.
 
 ---
 

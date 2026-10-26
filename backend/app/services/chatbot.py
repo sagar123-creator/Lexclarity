@@ -5,13 +5,20 @@ Flow per message:
   1. Embed the user's question.
   2. Semantic search against this document's chunks only (metadata-filtered
      by document_id — never leaks other documents' content).
-  3. Keep chunks above RETRIEVAL_MIN_SIMILARITY, capped at RETRIEVAL_TOP_K.
-  4. If nothing clears the similarity bar, skip the LLM call entirely and
-     return the "not found in document" response — this is what prevents
-     hallucination on off-topic questions.
+  3. Prefer chunks above RETRIEVAL_MIN_SIMILARITY, capped at RETRIEVAL_TOP_K.
+     If the strict bar isn't cleared, fall back to the closest chunks above
+     RETRIEVAL_MIN_SIMILARITY_FLOOR — local embedding models routinely score
+     genuine matches below 0.25 (short documents are often a single chunk), so
+     a hard cutoff there silently rejected valid questions.
+  4. If nothing clears the floor either, skip the LLM call entirely and return
+     the "not found in document" response — this is what prevents hallucination
+     on off-topic questions.
   5. Otherwise, build a context block (with recent conversation history for
-     follow-ups) and ask the LLM to answer ONLY from that context, citing
-     page/section for every claim.
+     follow-ups) and ask the LLM to answer ONLY from that context: a direct,
+     plain-English answer first (not a paste of the document), citing page/
+     section for every claim — and to return "not_found" when the excerpts
+     don't answer, in which case it must invite the user to ask a question the
+     document can actually answer.
   6. Parse the structured response into an answer + citation list.
 """
 from app.config import settings
@@ -20,19 +27,31 @@ from app.services.vector_store import get_vector_store
 from app.services.llm import complete_json, LLMError
 from app.services.verification import Passage, verify_answer
 
-SYSTEM_PROMPT = """You are LexClarity, an AI assistant that analyzes legal documents.
+SYSTEM_PROMPT = """You are LexClarity, an AI assistant that answers questions about ONE uploaded legal document.
 
-Answer questions ONLY using information retrieved from the uploaded document excerpts
-provided to you in this prompt. Do not invent facts. Do not assume information that is
-not present in the excerpts.
+You are given excerpts retrieved from that document. Answer ONLY from those excerpts.
 
-If the excerpts do not contain enough information to answer the question, say so clearly
-rather than guessing.
+How to answer:
+- Start with the direct answer to the question, in plain English. Then briefly explain or
+  quote the wording that supports it (any direct quote under 25 words).
+- Do not paste or paraphrase large blocks of the document without first answering the
+  question — the user asked a question and wants it answered, not a copy of the text.
+- Never invent facts, dates, names, amounts or obligations that are not in the excerpts.
+- Explain legal language in simple terms.
 
-When possible, cite the relevant page and section for every factual claim.
+When you cannot answer:
+- If the excerpts do not contain the information needed, or the question is not about this
+  document (general knowledge, small talk, unrelated topics), return confidence "not_found".
+- In that case the answer must briefly say this document does not cover it, and invite the
+  user to ask a question about this document (say what the document is about, based on the
+  excerpts). Do not attempt the question and do not guess.
 
-Explain legal language in simple terms when relevant.
+Confidence values:
+- "answered": the excerpts clearly support the answer.
+- "low_confidence": the excerpts are only tangentially related.
+- "not_found": the excerpts contain nothing relevant to the question.
 
+Legal-safety rules:
 Do not present yourself as a lawyer. Do not provide definitive legal advice. When a
 question calls for a legal judgment (e.g. "should I sign this"), clearly distinguish:
 1. What the document says.
@@ -45,9 +64,25 @@ Always respond with a JSON object of the form:
   "answer": "your answer text",
   "citations": [{"page_number": int, "section": str, "chunk_id": str}]
 }
-"not_found" means the excerpts contain nothing relevant to the question.
-"low_confidence" means the excerpts are only tangentially related.
+Only cite chunk_ids that appear in the excerpts provided in the prompt.
 """
+
+# Shown when retrieval can't reach the model (nothing above the floor) or the model
+# returns an empty answer — phrased so the user knows what to ask next.
+NOT_FOUND_ANSWER = (
+    "I couldn't find anything about that in this document, so I won't guess. "
+    "I can only answer questions about the uploaded file — try asking about its "
+    "parties, key dates, obligations, risks or termination terms."
+)
+
+
+def _not_found(answer: str = NOT_FOUND_ANSWER) -> dict:
+    return {
+        "answer": answer,
+        "citations": [],
+        "confidence": "not_found",
+        "verification": {"overall": "insufficient", "claims": []},
+    }
 
 
 def _format_history(history: list[dict]) -> str:
@@ -60,7 +95,13 @@ def _format_history(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def answer_question(document_id: str, question: str, history: list[dict], ocr_pages: set[int] | None = None) -> dict:
+def answer_question(
+    document_id: str,
+    question: str,
+    history: list[dict],
+    ocr_pages: set[int] | None = None,
+    document_name: str | None = None,
+) -> dict:
     """Returns {answer, citations, confidence, verification}.
 
     After generation, every factual claim in the answer is verified against
@@ -75,12 +116,18 @@ def answer_question(document_id: str, question: str, history: list[dict], ocr_pa
     relevant = [r for r in retrieved if r.similarity >= settings.RETRIEVAL_MIN_SIMILARITY]
 
     if not relevant:
-        return {
-            "answer": "I couldn't find this information in the uploaded document.",
-            "citations": [],
-            "confidence": "not_found",
-            "verification": {"overall": "insufficient", "claims": []},
-        }
+        # Near-miss fallback: local embedding models often score genuine matches
+        # (short questions, single-chunk documents) below the strict bar, so a
+        # hard cutoff there rejected valid questions. Hand the closest passages
+        # to the model instead — it must return "not_found" when they don't
+        # actually answer, which is the real hallucination guard.
+        relevant = [
+            r for r in retrieved[:3]
+            if r.similarity >= settings.RETRIEVAL_MIN_SIMILARITY_FLOOR
+        ]
+
+    if not relevant:
+        return _not_found()
 
     context = "\n\n".join(
         f"[chunk_id={r.chunk_id} page={r.page_number} section={r.section_heading or 'n/a'} "
@@ -91,12 +138,17 @@ def answer_question(document_id: str, question: str, history: list[dict], ocr_pa
     prompt = f"""Conversation so far:
 {_format_history(history)}
 
-Relevant excerpts retrieved from the uploaded document:
+Document: {document_name or "the uploaded document"}
+
+Relevant excerpts retrieved from the document:
 {context}
 
 Current question: {question}
 
 Answer the current question using only the excerpts above and the conversation context.
+Lead with the direct answer in plain English. If the excerpts do not answer the question,
+or the question is not about this document, respond with confidence "not_found", say the
+document does not cover it, and invite the user to ask a question about this document.
 Respond with the JSON object format specified in your instructions."""
 
     try:
@@ -135,7 +187,7 @@ Respond with the JSON object format specified in your instructions."""
         if chunk is None:
             enriched[-1]["warning"] = "This reference could not be matched to a retrieved passage and is not shown as a source."
 
-    answer_text = result.get("answer", "").strip() or "I couldn't find this information in the uploaded document."
+    answer_text = result.get("answer", "").strip() or NOT_FOUND_ANSWER
 
     # --- Claim verification against retrieved evidence ---
     passages = [

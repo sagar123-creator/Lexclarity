@@ -368,43 +368,6 @@ class ComparisonOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Workspaces
-# ---------------------------------------------------------------------------
-
-class WorkspaceCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-
-class WorkspaceDocumentAdd(BaseModel):
-    document_id: str
-
-
-class WorkspaceOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
-    name: str
-    description: Optional[str] = None
-    created_at: datetime
-
-
-class WorkspaceDetailOut(WorkspaceOut):
-    documents: List[DocumentOut] = []
-
-
-class WorkspaceChatRequest(BaseModel):
-    message: str
-
-
-class WorkspaceChatResponse(BaseModel):
-    answer: str
-    citations: List[CitationOut] = []
-    confidence: str
-    conflicts: List[Any] = []
-    verification: Optional[Any] = None
-
-
-# ---------------------------------------------------------------------------
 # Legal action plan
 # ---------------------------------------------------------------------------
 
@@ -426,18 +389,3 @@ class ActionPlanOut(BaseModel):
     generated_at: datetime
     items: List[PlanItemOut] = []
     disclaimer: str
-
-
-# ---------------------------------------------------------------------------
-# Evaluation
-# ---------------------------------------------------------------------------
-
-class EvaluationRunOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: str
-    dataset_name: str
-    status: str
-    error_message: Optional[str] = None
-    metrics: Optional[Any] = None
-    started_at: datetime
-    finished_at: Optional[datetime] = None

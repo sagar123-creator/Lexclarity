@@ -134,13 +134,13 @@ class PipelineRegressionTests(DatabaseTestCase):
         self.db.commit()
         self.db.refresh(self.doc)
 
-    def _run_pipeline(self, store=None, responder=None):
+    def _run_pipeline(self, store=None, responder=None, **kwargs):
         with fake_retrieval(store) as active_store:
             responder = responder or build_llm_responder(active_store, self.doc.id)
             with fake_llm(responder), patch(
                 "app.services.verification.semantic_verdict", return_value=None
             ):
-                process_document(self.db, self.doc)
+                process_document(self.db, self.doc, **kwargs)
         self.db.refresh(self.doc)
         return active_store
 
@@ -228,6 +228,164 @@ class PipelineRegressionTests(DatabaseTestCase):
         self.db.expire_all()
         survived = self.db.query(models.ActionItem).filter_by(document_id=self.doc.id).all()
         self.assertTrue(any(a.decision == "accepted" for a in survived))
+
+    def test_resume_retries_only_the_missing_sections(self):
+        """A resume keeps the sections that already worked and spends the retry
+        on the ones that came back empty — re-deriving everything is what
+        burns the provider's per-day quota before those sections are reached."""
+        store = self._run_pipeline()
+
+        # Simulate a run that produced summary/entities/obligations and then
+        # died on the daily quota: the last three sections never ran.
+        for table in (models.ImportantDate, models.Clause, models.Risk):
+            self.db.query(table).filter_by(document_id=self.doc.id).delete(
+                synchronize_session=False
+            )
+        self.db.commit()
+        self.db.expire_all()
+
+        working = build_llm_responder(store, self.doc.id)
+        asked: list[str] = []
+
+        def tracking(system, user):
+            asked.append(user)
+            return working(system, user)
+
+        self._run_pipeline(store=store, responder=tracking, resume_missing=True)
+
+        self.assertEqual(self.doc.status, "ready", self.doc.error_message)
+        self.assertIsNone(self.doc.error_message)
+
+        # Completed sections were preserved, not regenerated...
+        prompts = "\n".join(asked)
+        self.assertNotIn("executive_summary", prompts)
+        self.assertNotIn("Extract every party", prompts)
+        self.assertNotIn("Extract concrete obligations", prompts)
+        # ...while the empty ones were actually retried.
+        self.assertIn("Extract important dates", prompts)
+        self.assertIn("Identify which of these clause categories", prompts)
+        self.assertIn("Identify potential risks", prompts)
+
+        self.assertEqual(self.db.query(models.Entity).filter_by(document_id=self.doc.id).count(), 2)
+        self.assertEqual(self.db.query(models.Obligation).filter_by(document_id=self.doc.id).count(), 1)
+        self.assertEqual(self.db.query(models.ImportantDate).filter_by(document_id=self.doc.id).count(), 1)
+        self.assertEqual(self.db.query(models.Clause).filter_by(document_id=self.doc.id).count(), 1)
+        self.assertEqual(self.db.query(models.Risk).filter_by(document_id=self.doc.id).count(), 1)
+
+        # No re-chunking: kept rows keep valid evidence links.
+        chunk_ids = {
+            c.id
+            for c in self.db.query(models.DocumentChunk).filter_by(document_id=self.doc.id)
+        }
+        self.assertGreater(len(chunk_ids), 0)
+        for table in (models.Obligation, models.ImportantDate, models.Clause, models.Risk):
+            for row in self.db.query(table).filter_by(document_id=self.doc.id):
+                if row.source_chunk_id is not None:
+                    self.assertIn(row.source_chunk_id, chunk_ids)
+
+    def test_full_rerun_still_rebuilds_every_section(self):
+        """Without the resume flag a re-run derives everything again — that is
+        the ``?full=true`` path."""
+        store = self._run_pipeline()
+        working = build_llm_responder(store, self.doc.id)
+        asked: list[str] = []
+
+        def tracking(system, user):
+            asked.append(user)
+            return working(system, user)
+
+        self._run_pipeline(store=store, responder=tracking)
+
+        prompts = "\n".join(asked)
+        self.assertIn("executive_summary", prompts)
+        self.assertIn("Extract every party", prompts)
+        self.assertIn("Extract concrete obligations", prompts)
+        # A full rebuild still replaces rather than duplicates.
+        self.assertEqual(
+            self.db.query(models.Obligation).filter_by(document_id=self.doc.id).count(), 1
+        )
+        self.assertEqual(
+            self.db.query(models.Risk).filter_by(document_id=self.doc.id).count(), 1
+        )
+
+    def test_stop_requested_before_the_run_stops_at_the_first_boundary(self):
+        """A stop raised while nothing is running still takes effect: the run
+        that starts next stops immediately instead of burning quota."""
+        from app.services import cancellation
+
+        cancellation.request_stop(self.doc.id)
+        try:
+            self._run_pipeline()
+        finally:
+            cancellation.clear_stop(self.doc.id)
+
+        self.assertEqual(self.doc.status, "stopped")
+        self.assertIn("stopped", (self.doc.error_message or "").lower())
+        self.assertEqual(
+            self.db.query(models.DocumentAnalysis)
+            .filter_by(document_id=self.doc.id)
+            .count(),
+            0,
+        )
+        self.assertEqual(
+            self.db.query(models.Risk).filter_by(document_id=self.doc.id).count(), 0
+        )
+
+    def test_stop_mid_run_keeps_finished_sections_and_resumes_later(self):
+        """Stopping lands on the next stage boundary: the summary that already
+        committed survives, the sections behind it never run, and a resume
+        picks up exactly where the stop happened."""
+        from app.services import cancellation
+        from tests.fakes import FakeVectorStore
+
+        store = FakeVectorStore()
+        working = build_llm_responder(store, self.doc.id)
+
+        def stopping(system, user):
+            result = working(system, user)
+            if "executive_summary" in user:
+                # The user presses "stop" while the summary call is in flight.
+                cancellation.request_stop(self.doc.id)
+            return result
+
+        self._run_pipeline(store=store, responder=stopping)
+
+        self.assertEqual(self.doc.status, "stopped", self.doc.error_message)
+        # The run consumed its own stop flag on the way out.
+        self.assertFalse(cancellation.stop_requested(self.doc.id))
+
+        analysis = (
+            self.db.query(models.DocumentAnalysis)
+            .filter_by(document_id=self.doc.id)
+            .first()
+        )
+        self.assertIsNotNone(analysis)
+        self.assertTrue(analysis.executive_summary)
+        # Sections behind the boundary that observed the stop never ran.
+        self.assertEqual(
+            self.db.query(models.Entity).filter_by(document_id=self.doc.id).count(), 0
+        )
+        self.assertEqual(
+            self.db.query(models.Risk).filter_by(document_id=self.doc.id).count(), 0
+        )
+
+        asked: list[str] = []
+
+        def tracking(system, user):
+            asked.append(user)
+            return working(system, user)
+
+        self._run_pipeline(store=store, responder=tracking, resume_missing=True)
+
+        self.assertEqual(self.doc.status, "ready", self.doc.error_message)
+        # The kept summary was not re-derived; the missing sections were.
+        self.assertNotIn("executive_summary", "\n".join(asked))
+        self.assertEqual(
+            self.db.query(models.Entity).filter_by(document_id=self.doc.id).count(), 2
+        )
+        self.assertEqual(
+            self.db.query(models.Risk).filter_by(document_id=self.doc.id).count(), 1
+        )
 
     def test_provider_outage_fails_document_gracefully(self):
         from app.services.llm import LLMError

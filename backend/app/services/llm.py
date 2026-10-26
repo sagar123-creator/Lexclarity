@@ -539,6 +539,17 @@ def _record_usage(response) -> None:
         pass
 
 
+def _groq_reasoning_effort() -> str | None:
+    """Reasoning effort to request, or None when the model doesn't take one.
+
+    Groq accepts `reasoning_effort` only per family: gpt-oss takes
+    low|medium|high, and models outside a family's supported set are rejected
+    with a 400 — so it is gated on the configured model rather than sent
+    unconditionally.
+    """
+    return "low" if "gpt-oss" in (settings.LLM_MODEL or "").lower() else None
+
+
 def _complete_groq(system_prompt: str, user_prompt: str, max_tokens: int) -> str:
     try:
         from openai import OpenAI
@@ -558,6 +569,16 @@ def _complete_groq(system_prompt: str, user_prompt: str, max_tokens: int) -> str
                 {"role": "user", "content": user_prompt},
             ],
         )
+        # gpt-oss reasons before it answers, and `max_tokens` covers those
+        # hidden reasoning tokens too. At the default "medium" effort the whole
+        # ceiling is regularly consumed by reasoning, which is how the
+        # extraction stages produced truncated JSON ("Unterminated string…") or
+        # nothing at all ("Expecting value: line 1 column 1"). "low" keeps the
+        # budget for the actual answer.
+        effort = _groq_reasoning_effort()
+        if effort:
+            kwargs["reasoning_effort"] = effort
+
         # Prefer the raw-response API so we can read Groq's rate-limit headers
         # and pace against the provider's real remaining-token budget instead of
         # guessing from prompt length. Test doubles (MagicMock) auto-create
@@ -565,15 +586,26 @@ def _complete_groq(system_prompt: str, user_prompt: str, max_tokens: int) -> str
         # and fall back to the plain call they expect.
         raw_api = getattr(client, "with_raw_response", None)
         is_openai_impl = raw_api is not None and type(raw_api).__module__.startswith("openai")
-        if is_openai_impl:
-            raw = client.with_raw_response.chat.completions.create(**kwargs)
-            _sync_bucket_from_headers(getattr(raw, "headers", None))
-            _log_provider_limits(getattr(raw, "headers", None))
-            response = raw.parse()
-        else:
-            response = client.chat.completions.create(**kwargs)
+
+        def _invoke():
+            if is_openai_impl:
+                raw = client.with_raw_response.chat.completions.create(**kwargs)
+                _sync_bucket_from_headers(getattr(raw, "headers", None))
+                _log_provider_limits(getattr(raw, "headers", None))
+                return raw.parse()
+            return client.chat.completions.create(**kwargs)
+
+        response = _invoke()
         _record_usage(response)
-        return response.choices[0].message.content or ""
+        content = response.choices[0].message.content
+        if not content and effort:
+            # A reasoning-only completion means the ceiling was eaten again.
+            # One retry costs a little quota but is the difference between an
+            # empty analysis section and a real one.
+            response = _invoke()
+            _record_usage(response)
+            content = response.choices[0].message.content
+        return content or ""
     except Exception as e:
         _raise_groq_error(e)
 

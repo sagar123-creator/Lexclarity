@@ -7,7 +7,8 @@ type BadgeVariant =
   | "low"
   | "processing"
   | "ready"
-  | "failed";
+  | "failed"
+  | "stopped";
 
 const variantStyles: Record<BadgeVariant, string> = {
   default: "bg-line/60 text-ink-soft",
@@ -17,6 +18,7 @@ const variantStyles: Record<BadgeVariant, string> = {
   processing: "bg-brass-soft text-brass",
   ready: "bg-risk-lowBg text-risk-low",
   failed: "bg-risk-highBg text-risk-high",
+  stopped: "bg-line/60 text-ink-soft",
 };
 
 export function Badge({
@@ -51,5 +53,6 @@ export function riskVariant(level: string | null | undefined): BadgeVariant {
 export function statusVariant(status: string): BadgeVariant {
   if (status === "ready") return "ready";
   if (status === "failed") return "failed";
+  if (status === "stopped") return "stopped";
   return "processing";
 }

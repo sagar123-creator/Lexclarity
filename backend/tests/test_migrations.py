@@ -125,7 +125,6 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("documents.extraction_method", applied)
         tables = inspect(self.engine).get_table_names()
         self.assertIn("action_items", tables)
-        self.assertIn("evaluation_runs", tables)
 
 
 if __name__ == "__main__":

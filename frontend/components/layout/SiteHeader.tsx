@@ -17,12 +17,6 @@ export function SiteHeader() {
           <Link href="/dashboard" className="text-ink-soft hover:text-ink transition-colors">
             Dashboard
           </Link>
-          <Link href="/workspaces" className="text-ink-soft hover:text-ink transition-colors">
-            Workspaces
-          </Link>
-          <Link href="/evaluation" className="text-ink-soft hover:text-ink transition-colors">
-            Evaluation
-          </Link>
           <Link
             href="/upload"
             className="rounded-md bg-navy px-4 py-2 text-white text-sm font-medium hover:bg-navy-dark transition-colors"

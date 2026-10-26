@@ -83,7 +83,13 @@ class Settings:
     # --- RAG retrieval ---
     RETRIEVAL_TOP_K: int = int(os.getenv("RETRIEVAL_TOP_K", "6"))
     RETRIEVAL_MIN_SIMILARITY: float = float(os.getenv("RETRIEVAL_MIN_SIMILARITY", "0.25"))
-    WORKSPACE_RETRIEVAL_TOP_K: int = int(os.getenv("WORKSPACE_RETRIEVAL_TOP_K", "12"))
+    # Safety net below the strict bar: passages in this band are still handed to
+    # the model (which must reply "not_found" when they don't answer). Without
+    # it, short/single-chunk documents rarely clear 0.25 and every question
+    # falls back to "not found" even when the answer is in the text.
+    RETRIEVAL_MIN_SIMILARITY_FLOOR: float = float(
+        os.getenv("RETRIEVAL_MIN_SIMILARITY_FLOOR", "0.10")
+    )
 
     # --- OCR (optional fallback for scanned PDFs) ---
     OCR_ENABLED: bool = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
@@ -97,11 +103,6 @@ class Settings:
     VERIFICATION_MIN_SIMILARITY: float = float(os.getenv("VERIFICATION_MIN_SIMILARITY", "0.20"))
     # A claim's supporting passage must match at least this well for "supported".
     VERIFICATION_SUPPORT_THRESHOLD: float = float(os.getenv("VERIFICATION_SUPPORT_THRESHOLD", "0.35"))
-
-    # --- Evaluation ---
-    EVAL_DATASET_PATH: str = os.getenv(
-        "EVAL_DATASET_PATH", str(BASE_DIR / "evaluation" / "datasets" / "sample_dataset.jsonl")
-    )
 
     # --- Auth (simplified demo auth; see README for production notes) ---
     DEMO_USER_ID: str = os.getenv("DEMO_USER_ID", "demo-user")

@@ -18,15 +18,12 @@ Added by the trust/action-platform upgrade:
 
 document_pages       -> full page text (source of truth for the evidence viewer)
 verifications        -> per-claim verification results (supported / contradicted / ...)
-workspaces           -> multi-document case workspaces
-workspace_documents  -> workspace <-> document membership
 action_items         -> Legal Action Center items (from findings)
 drafts               -> user-editable generated documents (emails, letters, ...)
 clause_suggestions   -> AI negotiation suggestions for a selected clause
 reminders            -> user-consented deadline reminders
 checklist_items      -> missing-clause detector results
 comparisons          -> persisted contract comparison results
-evaluation_runs      -> accuracy-evaluation runs with real computed metrics
 audit_log            -> records of consequential user-approved actions
 """
 import re
@@ -311,32 +308,6 @@ class Verification(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class Workspace(Base):
-    """A case workspace grouping related documents for cross-document work."""
-
-    __tablename__ = "workspaces"
-
-    id = Column(String, primary_key=True, default=gen_id)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String, nullable=False)
-    description = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    documents = relationship("WorkspaceDocument", back_populates="workspace", cascade="all, delete-orphan")
-
-
-class WorkspaceDocument(Base):
-    __tablename__ = "workspace_documents"
-
-    id = Column(String, primary_key=True, default=gen_id)
-    workspace_id = Column(String, ForeignKey("workspaces.id"), nullable=False, index=True)
-    document_id = Column(String, ForeignKey("documents.id"), nullable=False, index=True)
-    added_at = Column(DateTime, default=datetime.utcnow)
-
-    workspace = relationship("Workspace", back_populates="documents")
-    document = relationship("Document")
-
-
 class ActionItem(Base):
     """A Legal Action Center item: Risk -> Evidence -> Action.
 
@@ -470,22 +441,6 @@ class Comparison(Base):
     status = Column(String, nullable=False, default="ready")  # ready | failed
     summary = Column(JSON, nullable=True)  # structured comparison result
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class EvaluationRun(Base):
-    """One execution of the accuracy-evaluation framework over a labelled
-    dataset. Metrics are computed from the actual run, never hardcoded."""
-
-    __tablename__ = "evaluation_runs"
-
-    id = Column(String, primary_key=True, default=gen_id)
-    dataset_name = Column(String, nullable=False)
-    status = Column(String, nullable=False, default="running")  # running|completed|failed
-    error_message = Column(Text, nullable=True)
-    metrics = Column(JSON, nullable=True)      # aggregate metrics
-    item_results = Column(JSON, nullable=True) # per-item detail
-    started_at = Column(DateTime, default=datetime.utcnow)
-    finished_at = Column(DateTime, nullable=True)
 
 
 class AuditLog(Base):
